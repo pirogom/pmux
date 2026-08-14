@@ -139,9 +139,11 @@ body.resizing-sidebar {
   max-height: none;
 }
 
-/* When PROFILES section is collapsed, expand ACTIVE SESSIONS section to fill remaining height */
+/* When one section is collapsed, expand the other section to fill remaining height */
 .sidebar:has(#section-profiles.collapsed) #section-sessions,
-#section-sessions.expand-fill {
+.sidebar:has(#section-sessions.collapsed) #section-profiles,
+#section-sessions.expand-fill,
+#section-profiles.expand-fill {
   flex: 1;
   max-height: none;
 }

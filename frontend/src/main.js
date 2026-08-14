@@ -141,6 +141,25 @@ function connectGlobalEventsWS() {
                     window.close();
                 }
             } else if (data.type === 'session_updated') {
+                const payload = data.data || {};
+
+                // If it's just an active-pane focus change, do NOT tear down or redraw workspace!
+                if (payload.action === 'active-pane') {
+                    if (activeSession && payload.sessionId === activeSession.id) {
+                        activeSession.activePaneId = payload.paneId;
+                        if (activePaneId !== payload.paneId) {
+                            setActivePane(payload.paneId, false);
+                        }
+                    }
+                    return;
+                }
+
+                // If session was renamed, just refresh title/list without recreating terminal DOM
+                if (payload.action === 'renamed') {
+                    refreshSessions();
+                    return;
+                }
+
                 refreshSessions().then(() => {
                     if (activeSession) {
                         const latestSess = sessions.find(s => s.id === activeSession.id);
@@ -294,13 +313,13 @@ function setupEventListeners() {
 
     // Automatically sync and refresh terminal panes when window gains focus or becomes visible
     window.addEventListener('focus', () => {
-        reflowAllPanes(true, true);
+        reflowAllPanes(true, false);
         setTimeout(() => reflowAllPanes(true, false), 80);
     });
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            reflowAllPanes(true, true);
+            reflowAllPanes(true, false);
             setTimeout(() => reflowAllPanes(true, false), 80);
         }
     });
@@ -882,12 +901,17 @@ function initCollapsibleSidebarSections() {
     const sectionProfiles = document.getElementById('section-profiles');
     const btnAddProfile = document.getElementById('btn-add-profile');
 
-    const updateSessionsExpandState = () => {
+    const updateSectionsExpandState = () => {
         if (sectionProfiles && sectionSessions) {
             if (sectionProfiles.classList.contains('collapsed')) {
                 sectionSessions.classList.add('expand-fill');
             } else {
                 sectionSessions.classList.remove('expand-fill');
+            }
+            if (sectionSessions.classList.contains('collapsed')) {
+                sectionProfiles.classList.add('expand-fill');
+            } else {
+                sectionProfiles.classList.remove('expand-fill');
             }
         }
     };
@@ -899,12 +923,13 @@ function initCollapsibleSidebarSections() {
     if (localStorage.getItem('pmux_profiles_collapsed') === 'true' && sectionProfiles) {
         sectionProfiles.classList.add('collapsed');
     }
-    updateSessionsExpandState();
+    updateSectionsExpandState();
 
     if (headerSessions && sectionSessions) {
         headerSessions.addEventListener('click', () => {
             sectionSessions.classList.toggle('collapsed');
             localStorage.setItem('pmux_sessions_collapsed', sectionSessions.classList.contains('collapsed'));
+            updateSectionsExpandState();
         });
     }
 
@@ -912,7 +937,7 @@ function initCollapsibleSidebarSections() {
         headerProfiles.addEventListener('click', () => {
             sectionProfiles.classList.toggle('collapsed');
             localStorage.setItem('pmux_profiles_collapsed', sectionProfiles.classList.contains('collapsed'));
-            updateSessionsExpandState();
+            updateSectionsExpandState();
         });
     }
 

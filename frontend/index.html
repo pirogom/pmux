@@ -18,19 +18,8 @@
                 <button id="btn-shutdown-server" class="icon-btn-small btn-shutdown" title="Shutdown pmux server">✖</button>
             </div>
 
-            <!-- Active Sessions List -->
-            <div id="section-sessions" class="sidebar-section">
-                <div id="header-sessions" class="sidebar-section-header collapsible" title="Toggle Active Sessions">
-                    <div class="sidebar-section-title-wrapper">
-                        <span class="chevron-icon">▼</span>
-                        <span class="sidebar-section-title">ACTIVE SESSIONS</span>
-                    </div>
-                </div>
-                <ul id="session-list" class="session-list"></ul>
-            </div>
-
             <!-- Profiles List & Add Profile Button -->
-            <div id="section-profiles" class="sidebar-section flex-grow">
+            <div id="section-profiles" class="sidebar-section">
                 <div id="header-profiles" class="sidebar-section-header collapsible" title="Toggle Profiles">
                     <div class="sidebar-section-title-wrapper">
                         <span class="chevron-icon">▼</span>
@@ -39,6 +28,17 @@
                     <button id="btn-add-profile" class="icon-btn-small" title="Add Profile">➕</button>
                 </div>
                 <ul id="profile-list" class="profile-list"></ul>
+            </div>
+
+            <!-- Active Sessions List -->
+            <div id="section-sessions" class="sidebar-section flex-grow">
+                <div id="header-sessions" class="sidebar-section-header collapsible" title="Toggle Active Sessions">
+                    <div class="sidebar-section-title-wrapper">
+                        <span class="chevron-icon">▼</span>
+                        <span class="sidebar-section-title">ACTIVE SESSIONS</span>
+                    </div>
+                </div>
+                <ul id="session-list" class="session-list"></ul>
             </div>
         </aside>
         <div id="sidebar-resizer" class="sidebar-resizer" title="Drag to resize sidebar"></div>

@@ -18,6 +18,7 @@ const sessionListEl = document.getElementById('session-list');
 const profileListEl = document.getElementById('profile-list');
 const activeSessionTitleEl = document.getElementById('active-session-title');
 const btnRenameSessionEl = document.getElementById('btn-rename-session');
+const btnRefreshSessionPanesEl = document.getElementById('btn-refresh-session-panes');
 const terminalWorkspaceEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 
@@ -394,6 +395,12 @@ function setupEventListeners() {
     }
 
     addClick('btn-rename-session', () => startEditingSessionTitle());
+    addClick('btn-refresh-session-panes', () => {
+        if (!activeSession) return;
+        reflowAllPanes(true);
+        setTimeout(() => reflowAllPanes(true), 60);
+        showToast('Session panes refreshed', 'info');
+    });
 
     if (activeSessionTitleEl) {
         activeSessionTitleEl.addEventListener('click', () => startEditingSessionTitle());
@@ -568,6 +575,7 @@ async function closeSession(sessionId, sessionName) {
             emptyStateEl.style.display = 'flex';
             activeSessionTitleEl.textContent = 'No Active Session';
             if (btnRenameSessionEl) btnRenameSessionEl.classList.add('hidden');
+            if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.add('hidden');
         }
 
         await refreshSessions();
@@ -695,6 +703,7 @@ function showEmptyState() {
     activePaneId = null;
     if (activeSessionTitleEl) activeSessionTitleEl.textContent = 'No Active Session';
     if (btnRenameSessionEl) btnRenameSessionEl.classList.add('hidden');
+    if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.add('hidden');
     if (terminalWorkspaceEl) terminalWorkspaceEl.innerHTML = '';
     if (emptyStateEl) emptyStateEl.style.display = 'flex';
     renderSessionList();
@@ -714,6 +723,7 @@ async function attachToSession(sessionId) {
     activeSession = sess;
     activeSessionTitleEl.textContent = sess.name;
     if (btnRenameSessionEl) btnRenameSessionEl.classList.remove('hidden');
+    if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.remove('hidden');
     renderSessionList();
 
     // Cleanup any deleted/inactive panes from activePanesMap

@@ -15,6 +15,7 @@
                     <span class="brand-icon">⚡</span>
                     <span class="brand-name">pmux</span>
                 </div>
+                <button id="btn-shutdown-server" class="icon-btn-small btn-shutdown" title="Shutdown pmux server">✖</button>
             </div>
 
             <!-- Active Sessions List -->
@@ -46,10 +47,12 @@
         <main class="main-content">
             <!-- Top Controls Toolbar -->
             <header class="top-bar">
-                <button id="btn-toggle-sidebar-top" class="icon-btn toolbar-toggle-btn" title="Toggle Sidebar">◀</button>
-                <div class="session-info">
-                    <div id="active-session-title" class="session-title" contenteditable="false" spellcheck="false" title="Click to edit session name">No Active Session</div>
-                    <button id="btn-rename-session" class="icon-btn-small hidden" title="Rename Active Session">✏️</button>
+                <div class="top-bar-left">
+                    <button id="btn-toggle-sidebar-top" class="icon-btn toolbar-toggle-btn" title="Toggle Sidebar">◀</button>
+                    <div class="session-info">
+                        <div id="active-session-title" class="session-title" contenteditable="false" spellcheck="false" title="Click to edit session name">No Active Session</div>
+                        <button id="btn-rename-session" class="icon-btn-small hidden" title="Rename Active Session">✏️</button>
+                    </div>
                 </div>
                 <div class="toolbar-actions">
                     <button id="btn-split-v" class="btn btn-secondary" title="Split Vertical (Side-by-side)">
@@ -167,6 +170,29 @@
             <div class="modal-footer">
                 <button id="btn-confirm-cancel" class="btn btn-secondary">Cancel</button>
                 <button id="btn-confirm-ok" class="btn btn-primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shutdown Confirmation Modal -->
+    <div id="shutdown-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3 id="shutdown-modal-title">Shutdown Server</h3>
+                <button id="btn-close-shutdown-modal" class="icon-btn">✖</button>
+            </div>
+            <div class="modal-body">
+                <p class="shutdown-warning-text">
+                    This will terminate the pmux server and all session clients.<br>
+                    Type <strong>shutdown</strong> exactly to shut down.
+                </p>
+                <div class="form-group shutdown-input-group">
+                    <input type="text" id="shutdown-confirm-input" placeholder="shutdown" autocomplete="off" spellcheck="false" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-shutdown" class="btn btn-secondary">Cancel</button>
+                <button id="btn-confirm-shutdown" class="btn btn-danger" disabled>Shutdown</button>
             </div>
         </div>
     </div>

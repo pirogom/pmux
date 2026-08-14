@@ -311,6 +311,12 @@ body.resizing-sidebar {
   padding: 0 16px;
 }
 
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .session-info {
   display: flex;
   align-items: center;
@@ -759,6 +765,18 @@ body.ctrl-pressed .pane-element:hover .pane-close-btn {
 }
 .btn-outline:hover { background: var(--bg-card-hover); }
 
+.btn-danger {
+  background-color: var(--danger);
+  color: white;
+}
+.btn-danger:hover:not(:disabled) {
+  background-color: #c9515a;
+}
+.btn-danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .icon-btn, .icon-btn-small {
   background: transparent;
   border: none;
@@ -768,6 +786,31 @@ body.ctrl-pressed .pane-element:hover .pane-close-btn {
   padding: 4px;
 }
 .icon-btn:hover, .icon-btn-small:hover { color: var(--text-bright); }
+
+.btn-shutdown {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+}
+.btn-shutdown:hover {
+  color: var(--danger);
+  background-color: rgba(224, 108, 117, 0.15);
+}
+
+.shutdown-warning-text {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+.shutdown-warning-text strong {
+  color: var(--danger);
+}
+.shutdown-input-group {
+  margin-top: 4px;
+}
 
 /* Modal */
 .modal {

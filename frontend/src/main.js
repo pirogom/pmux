@@ -38,6 +38,14 @@ const confirmTitleEl = document.getElementById('confirm-title');
 const confirmMessageEl = document.getElementById('confirm-message');
 const btnConfirmOk = document.getElementById('btn-confirm-ok');
 const btnConfirmCancel = document.getElementById('btn-confirm-cancel');
+
+const shutdownModalEl = document.getElementById('shutdown-modal');
+const shutdownConfirmInput = document.getElementById('shutdown-confirm-input');
+const btnConfirmShutdown = document.getElementById('btn-confirm-shutdown');
+const btnCancelShutdown = document.getElementById('btn-cancel-shutdown');
+const btnCloseShutdownModal = document.getElementById('btn-close-shutdown-modal');
+const btnShutdownServer = document.getElementById('btn-shutdown-server');
+
 const toastContainerEl = document.getElementById('toast-container');
 
 // Initialization
@@ -213,6 +221,43 @@ function showConfirm(title, message) {
     });
 }
 
+function openShutdownModal() {
+    if (!shutdownModalEl) return;
+    shutdownModalEl.classList.remove('hidden');
+    if (shutdownConfirmInput) {
+        shutdownConfirmInput.value = '';
+        setTimeout(() => shutdownConfirmInput.focus(), 50);
+    }
+    if (btnConfirmShutdown) {
+        btnConfirmShutdown.disabled = true;
+    }
+}
+
+function closeShutdownModal() {
+    if (!shutdownModalEl) return;
+    shutdownModalEl.classList.add('hidden');
+    if (shutdownConfirmInput) {
+        shutdownConfirmInput.value = '';
+    }
+}
+
+async function executeShutdown() {
+    if (shutdownConfirmInput && shutdownConfirmInput.value.trim() !== 'shutdown') {
+        return;
+    }
+    closeShutdownModal();
+    showToast('Shutting down pmux server and clients...', 'info');
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.KillServer) {
+            await window.go.main.App.KillServer();
+        } else {
+            await fetch(`http://127.0.0.1:${serverPort}/api/server/kill`, { method: 'POST' });
+        }
+    } catch (err) {
+        console.warn('KillServer error / already closing:', err);
+    }
+}
+
 function addClick(id, handler) {
     const el = document.getElementById(id);
     if (el) {
@@ -244,6 +289,23 @@ function setupEventListeners() {
 
     window.addEventListener('blur', () => {
         updateCtrlState(false);
+    });
+
+    // Automatically sync and refresh terminal panes when window gains focus or becomes visible
+    window.addEventListener('focus', () => {
+        reflowAllPanes(true);
+        setTimeout(() => reflowAllPanes(true), 80);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            reflowAllPanes(true);
+            setTimeout(() => reflowAllPanes(true), 80);
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        reflowAllPanes(true);
     });
 
     const sidebarEl = document.getElementById('sidebar');
@@ -378,6 +440,39 @@ function setupEventListeners() {
     addClick('btn-cancel-profile', closeProfileModal);
     addClick('btn-save-profile', saveProfileFromModal);
     addClick('btn-refresh-sessions', refreshSessions);
+
+    addClick('btn-shutdown-server', openShutdownModal);
+    addClick('btn-cancel-shutdown', closeShutdownModal);
+    addClick('btn-close-shutdown-modal', closeShutdownModal);
+
+    if (shutdownConfirmInput) {
+        shutdownConfirmInput.addEventListener('input', (e) => {
+            if (btnConfirmShutdown) {
+                btnConfirmShutdown.disabled = (e.target.value.trim() !== 'shutdown');
+            }
+        });
+        shutdownConfirmInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && shutdownConfirmInput.value.trim() === 'shutdown') {
+                e.preventDefault();
+                executeShutdown();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeShutdownModal();
+            }
+        });
+    }
+
+    if (btnConfirmShutdown) {
+        btnConfirmShutdown.addEventListener('click', executeShutdown);
+    }
+
+    if (shutdownModalEl) {
+        shutdownModalEl.addEventListener('click', (e) => {
+            if (e.target === shutdownModalEl) {
+                closeShutdownModal();
+            }
+        });
+    }
 }
 
 // API Calls (Server HTTP API Fallback)
@@ -635,7 +730,7 @@ async function attachToSession(sessionId) {
     if (sess.activePaneId && activePanesMap.has(sess.activePaneId)) {
         setActivePane(sess.activePaneId, false);
     }
-    reflowAllPanes();
+    reflowAllPanes(true);
 }
 
 function renderLayoutTree(node, sess, isRoot = true) {
@@ -653,7 +748,10 @@ function renderLayoutTree(node, sess, isRoot = true) {
             paneEl.style.height = '100%';
             paneEl.style.width = '100%';
         }
-        paneEl.addEventListener('click', () => setActivePane(node.id));
+        paneEl.addEventListener('click', () => {
+            setActivePane(node.id);
+            reflowAllPanes(true);
+        });
 
         const paneData = sess.panes[node.id];
         if (paneData) {
@@ -1059,10 +1157,6 @@ function initXtermPane(containerEl, paneData) {
         }
     });
 
-    window.addEventListener('resize', () => {
-        reflowAllPanes();
-    });
-
     activePanesMap.set(paneData.id, {
         term,
         fitAddon,
@@ -1110,6 +1204,13 @@ function setActivePane(paneId, notifyServer = true) {
     if (activePanesMap.has(paneId)) {
         const p = activePanesMap.get(paneId);
         p.term.focus();
+        try {
+            p.fitAddon.fit();
+            p.term.refresh(0, p.term.rows - 1);
+            if (p.ws && p.ws.readyState === WebSocket.OPEN && p.term.cols >= 10 && p.term.rows >= 3) {
+                p.ws.send(JSON.stringify({ type: 'resize', cols: p.term.cols, rows: p.term.rows }));
+            }
+        } catch(e) {}
     }
     updateGitStatus();
 
@@ -1172,20 +1273,26 @@ async function splitCurrentPane(direction) {
 
 let reflowDebounceTimer = null;
 
-function reflowAllPanes() {
+function reflowAllPanes(forceSendResize = false) {
     if (reflowDebounceTimer) {
         clearTimeout(reflowDebounceTimer);
     }
     reflowDebounceTimer = setTimeout(() => {
-        activePanesMap.forEach(({ fitAddon, term }) => {
+        activePanesMap.forEach((paneObj) => {
+            const { fitAddon, term, ws, element } = paneObj;
             try {
-                fitAddon.fit();
-                if (term) {
-                    term.refresh(0, term.rows - 1);
+                if (element && element.isConnected && element.offsetWidth > 0 && element.offsetHeight > 0) {
+                    fitAddon.fit();
+                    if (term) {
+                        term.refresh(0, term.rows - 1);
+                        if (forceSendResize && ws && ws.readyState === WebSocket.OPEN && term.cols >= 10 && term.rows >= 3) {
+                            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                        }
+                    }
                 }
             } catch(e) {}
         });
-    }, 40);
+    }, 30);
 }
 
 // Profiles

@@ -143,6 +143,7 @@ func detectVisualStudioProfiles() []config.Profile {
 	vswhereExe := `C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
 	if _, err := os.Stat(vswhereExe); err == nil {
 		cmd := exec.Command(vswhereExe, "-prerelease", "-property", "installationPath")
+		prepareCommand(cmd)
 		output, err := cmd.Output()
 		if err == nil {
 			lines := strings.Split(string(output), "\r\n")

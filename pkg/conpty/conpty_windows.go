@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -196,6 +197,20 @@ func (c *ConPTY) Resize(cols, rows int) error {
 		return fmt.Errorf("ResizePseudoConsole error (0x%x): %v", r1, err)
 	}
 	return nil
+}
+
+// ForceRedraw momentarily alters cols to force Win32 ConPTY to emit a full screen redraw stream.
+func (c *ConPTY) ForceRedraw(cols, rows int) error {
+	if cols <= 0 || rows <= 0 {
+		return nil
+	}
+	jitterCols := cols + 1
+	if jitterCols > 300 {
+		jitterCols = cols - 1
+	}
+	_ = c.Resize(jitterCols, rows)
+	time.Sleep(15 * time.Millisecond)
+	return c.Resize(cols, rows)
 }
 
 func (c *ConPTY) Close() error {

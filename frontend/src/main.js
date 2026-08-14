@@ -294,19 +294,19 @@ function setupEventListeners() {
 
     // Automatically sync and refresh terminal panes when window gains focus or becomes visible
     window.addEventListener('focus', () => {
-        reflowAllPanes(true);
-        setTimeout(() => reflowAllPanes(true), 80);
+        reflowAllPanes(true, true);
+        setTimeout(() => reflowAllPanes(true, false), 80);
     });
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            reflowAllPanes(true);
-            setTimeout(() => reflowAllPanes(true), 80);
+            reflowAllPanes(true, true);
+            setTimeout(() => reflowAllPanes(true, false), 80);
         }
     });
 
     window.addEventListener('resize', () => {
-        reflowAllPanes(true);
+        reflowAllPanes(true, false);
     });
 
     const sidebarEl = document.getElementById('sidebar');
@@ -397,8 +397,8 @@ function setupEventListeners() {
     addClick('btn-rename-session', () => startEditingSessionTitle());
     addClick('btn-refresh-session-panes', () => {
         if (!activeSession) return;
-        reflowAllPanes(true);
-        setTimeout(() => reflowAllPanes(true), 60);
+        reflowAllPanes(true, true);
+        setTimeout(() => reflowAllPanes(true, true), 60);
         showToast('Session panes refreshed', 'info');
     });
 
@@ -741,10 +741,10 @@ async function attachToSession(sessionId) {
         setActivePane(sess.activePaneId, false);
     }
     
-    // Immediate and staged reflow passes to guarantee layout calculation, screen repaint, and ConPTY resize sync
-    reflowAllPanes(true);
-    setTimeout(() => reflowAllPanes(true), 60);
-    setTimeout(() => reflowAllPanes(true), 150);
+    // Immediate and staged reflow passes to guarantee layout calculation, screen repaint, and ConPTY redraw sync
+    reflowAllPanes(true, true);
+    setTimeout(() => reflowAllPanes(true, true), 60);
+    setTimeout(() => reflowAllPanes(true, false), 150);
 }
 
 function renderLayoutTree(node, sess, isRoot = true) {
@@ -995,7 +995,7 @@ function initXtermPane(containerEl, paneData) {
                     existing.term.refresh(0, existing.term.rows - 1);
                 }
                 if (existing.ws && existing.ws.readyState === WebSocket.OPEN && existing.term && existing.term.cols >= 10 && existing.term.rows >= 3) {
-                    existing.ws.send(JSON.stringify({ type: 'resize', cols: existing.term.cols, rows: existing.term.rows }));
+                    existing.ws.send(JSON.stringify({ type: 'redraw', cols: existing.term.cols, rows: existing.term.rows }));
                 }
             } catch(e) {}
         }, 30);
@@ -1297,7 +1297,7 @@ async function splitCurrentPane(direction) {
 
 let reflowDebounceTimer = null;
 
-function reflowAllPanes(forceSendResize = false) {
+function reflowAllPanes(forceSendResize = false, forceRedraw = false) {
     if (reflowDebounceTimer) {
         clearTimeout(reflowDebounceTimer);
     }
@@ -1309,8 +1309,12 @@ function reflowAllPanes(forceSendResize = false) {
                     fitAddon.fit();
                     if (term) {
                         term.refresh(0, term.rows - 1);
-                        if (forceSendResize && ws && ws.readyState === WebSocket.OPEN && term.cols >= 10 && term.rows >= 3) {
-                            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                        if (ws && ws.readyState === WebSocket.OPEN && term.cols >= 10 && term.rows >= 3) {
+                            if (forceRedraw) {
+                                ws.send(JSON.stringify({ type: 'redraw', cols: term.cols, rows: term.rows }));
+                            } else if (forceSendResize) {
+                                ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                            }
                         }
                     }
                 }

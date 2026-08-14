@@ -79,6 +79,27 @@ func (p *Pane) TriggerResize(cols, rows int) {
 	})
 }
 
+func (p *Pane) TriggerForceRedraw(cols, rows int) {
+	if cols < 10 || rows < 3 {
+		return
+	}
+
+	p.mu.Lock()
+	p.Cols = cols
+	p.Rows = rows
+	if p.resizeTimer != nil {
+		p.resizeTimer.Stop()
+	}
+	ptyInst := p.PTY
+	p.mu.Unlock()
+
+	if ptyInst != nil {
+		go func(inst *conpty.ConPTY, targetCols, targetRows int) {
+			_ = inst.ForceRedraw(targetCols, targetRows)
+		}(ptyInst, cols, rows)
+	}
+}
+
 type Session struct {
 	ID           string           `json:"id"`
 	Name         string           `json:"name"`

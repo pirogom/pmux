@@ -487,6 +487,10 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 					if pane.PTY != nil && wsMsg.Cols > 0 && wsMsg.Rows > 0 {
 						pane.TriggerResize(wsMsg.Cols, wsMsg.Rows)
 					}
+				case "redraw":
+					if pane.PTY != nil && wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						pane.TriggerForceRedraw(wsMsg.Cols, wsMsg.Rows)
+					}
 				}
 			} else {
 				// Raw string input fallback

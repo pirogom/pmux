@@ -40,6 +40,7 @@ type Pane struct {
 	Buffer      *RingBuffer              `json:"-"`
 	Clients     map[*websocket.Conn]bool `json:"-"`
 	resizeTimer *time.Timer
+	onExit      func(sessionID, paneID string)
 	mu          sync.Mutex
 }
 
@@ -180,6 +181,9 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
 		Clients:   make(map[*websocket.Conn]bool),
+		onExit: func(sID, pID string) {
+			_ = sm.ClosePane(sID, pID)
+		},
 	}
 
 	sess := &Session{
@@ -232,6 +236,9 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 			PTY:       ptyInst,
 			Buffer:    NewRingBuffer(512 * 1024),
 			Clients:   make(map[*websocket.Conn]bool),
+			onExit: func(sID, pID string) {
+				_ = sm.ClosePane(sID, pID)
+			},
 		}
 
 		sess.Panes[paneID] = pane
@@ -325,6 +332,9 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
 		Clients:   make(map[*websocket.Conn]bool),
+		onExit: func(sID, pID string) {
+			_ = sm.ClosePane(sID, pID)
+		},
 	}
 
 	sess.Panes[paneID] = newPane
@@ -370,6 +380,15 @@ func insertLayoutNode(current *LayoutNode, parentID, newID string, dir SplitDire
 
 func (p *Pane) readLoop() {
 	log.Printf("[conpty server] Starting read loop for pane %s (PID: %d)", p.ID, p.PTY.Pid)
+
+	// Monitor child process termination in background to close ConPTY when process exits
+	if p.PTY != nil && p.PTY.ProcHandle != 0 {
+		go func() {
+			_, _ = p.PTY.Wait()
+			_ = p.PTY.Close()
+		}()
+	}
+
 	buf := make([]byte, 32768) // 32KB buffer for fast ANSI sequence draining
 	for {
 		n, err := p.PTY.OutPipe.Read(buf)
@@ -399,6 +418,10 @@ func (p *Pane) readLoop() {
 			log.Printf("[conpty exit] Pane %s read loop ended: %v", p.ID, err)
 			break
 		}
+	}
+
+	if p.onExit != nil {
+		go p.onExit(p.SessionID, p.ID)
 	}
 }
 
@@ -453,6 +476,13 @@ func (sm *SessionManager) ClosePane(sessionID, paneID string) error {
 		pane.PTY.Close()
 	}
 
+	pane.mu.Lock()
+	for conn := range pane.Clients {
+		_ = conn.Close(websocket.StatusNormalClosure, "pane closed")
+	}
+	pane.Clients = make(map[*websocket.Conn]bool)
+	pane.mu.Unlock()
+
 	delete(sess.Panes, paneID)
 	delete(sm.panes, paneID)
 
@@ -498,6 +528,12 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 		if pane.PTY != nil {
 			pane.PTY.Close()
 		}
+		pane.mu.Lock()
+		for conn := range pane.Clients {
+			_ = conn.Close(websocket.StatusNormalClosure, "session closed")
+		}
+		pane.Clients = make(map[*websocket.Conn]bool)
+		pane.mu.Unlock()
 		delete(sm.panes, paneID)
 	}
 

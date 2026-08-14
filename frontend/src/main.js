@@ -41,14 +41,18 @@ const btnConfirmCancel = document.getElementById('btn-confirm-cancel');
 const toastContainerEl = document.getElementById('toast-container');
 
 // Initialization
+let isAppInitialized = false;
+
 window.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
 
     const initConfig = async () => {
+        if (isAppInitialized) return;
         try {
             if (window.go && window.go.main && window.go.main.App) {
                 serverPort = await window.go.main.App.GetServerPort();
                 detectedPresets = await window.go.main.App.GetDetectedProfiles();
+                isAppInitialized = true;
             }
         } catch (e) {
             console.warn('Wails bindings info:', e);
@@ -60,8 +64,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     await initConfig();
 
-    // Secondary retry after 200ms to guarantee Wails IPC bindings readiness
-    setTimeout(initConfig, 200);
+    // Retry once after 200ms only if Wails IPC bindings were not ready on initial load
+    if (!isAppInitialized) {
+        setTimeout(initConfig, 200);
+    }
 
     // Initial Git Status poll timer (default 3 seconds)
     startGitPollTimer(3);
@@ -909,6 +915,8 @@ function initXtermPane(containerEl, paneData) {
 
     // WebSocket connection to ConPTY stream with 3-retry 1s-delay management
     let retryCount = 0;
+    let hasEverConnected = false;
+    let isReconnecting = false;
 
     const connectPaneWS = () => {
         const wsUrl = `ws://127.0.0.1:${serverPort}/ws/pane/${paneData.id}`;
@@ -920,6 +928,11 @@ function initXtermPane(containerEl, paneData) {
 
         ws.onopen = () => {
             console.log(`WebSocket connected to pane ${paneData.id} at ${wsUrl}`);
+            if (isReconnecting) {
+                showToast('Terminal connection restored', 'success');
+                isReconnecting = false;
+            }
+            hasEverConnected = true;
             retryCount = 0; // Reset retry count on successful connection
             setTimeout(() => {
                 try {
@@ -945,12 +958,26 @@ function initXtermPane(containerEl, paneData) {
             console.warn(`WebSocket connection error for pane ${paneData.id}:`, e);
         };
 
-        ws.onclose = () => {
-            // Check if pane still exists in active workspace
+        ws.onclose = (event) => {
+            // 1. If normal closure (code 1000 or 1001), do not retry
+            if (event && (event.code === 1000 || event.code === 1001)) {
+                return;
+            }
+
+            // 2. Check if pane still exists in active workspace
             if (!activePanesMap.has(paneData.id)) {
                 return; // Pane was closed manually, do not retry
             }
 
+            // 3. If WebSocket NEVER successfully connected, this is an initial connect failure (not a dropped active session).
+            // Do NOT trigger reconnect toasts or loops during initial startup / dead pane rendering.
+            if (!hasEverConnected) {
+                console.warn(`Initial WebSocket connection failed for pane ${paneData.id}. Will not auto-reconnect.`);
+                return;
+            }
+
+            // 4. WebSocket was previously established and dropped unexpectedly -> auto-reconnect
+            isReconnecting = true;
             if (retryCount < 3) {
                 retryCount++;
                 showToast(`Terminal connection lost. Reconnecting (${retryCount}/3)...`, 'info');
@@ -961,6 +988,7 @@ function initXtermPane(containerEl, paneData) {
                 }, 1000);
             } else {
                 showToast('Failed to reconnect to terminal pane after 3 retries.', 'error');
+                isReconnecting = false;
             }
         };
 

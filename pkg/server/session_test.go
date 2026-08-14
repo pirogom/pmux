@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestRemoveLayoutNode(t *testing.T) {
@@ -36,4 +37,26 @@ func TestRemoveLayoutNode(t *testing.T) {
 	if sess.Layout.ID != p1.ID {
 		t.Errorf("Expected remaining layout ID to be %s, got %s", p1.ID, sess.Layout.ID)
 	}
+}
+
+func TestPaneExitAutoCleanup(t *testing.T) {
+	sm := NewSessionManager()
+	sess, p1, err := sm.CreateSession("prof_1", "ExitTestSession", "cmd.exe", []string{"/c", "exit 0"}, "", 80, 24)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	_ = p1
+
+	// Wait up to 3 seconds for cmd.exe to exit and readLoop to trigger auto ClosePane
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		sm.mu.RLock()
+		_, exists := sm.sessions[sess.ID]
+		sm.mu.RUnlock()
+		if !exists {
+			t.Logf("Session %s automatically cleaned up on process exit", sess.ID)
+			return
+		}
+	}
+	t.Fatalf("Session %s was not cleaned up after process exit", sess.ID)
 }

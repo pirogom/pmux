@@ -380,15 +380,6 @@ func insertLayoutNode(current *LayoutNode, parentID, newID string, dir SplitDire
 
 func (p *Pane) readLoop() {
 	log.Printf("[conpty server] Starting read loop for pane %s (PID: %d)", p.ID, p.PTY.Pid)
-
-	// Monitor child process termination in background to close ConPTY when process exits
-	if p.PTY != nil && p.PTY.ProcHandle != 0 {
-		go func() {
-			_, _ = p.PTY.Wait()
-			_ = p.PTY.Close()
-		}()
-	}
-
 	buf := make([]byte, 32768) // 32KB buffer for fast ANSI sequence draining
 	for {
 		n, err := p.PTY.OutPipe.Read(buf)
@@ -489,11 +480,6 @@ func (sm *SessionManager) ClosePane(sessionID, paneID string) error {
 	// If no panes left in session, close entire session
 	if len(sess.Panes) == 0 {
 		delete(sm.sessions, sessionID)
-		saveLayoutToProfile(sess.ProfileID, sess.Name, &Session{
-			ID:    sessionID,
-			Name:  sess.Name,
-			Panes: make(map[string]*Pane),
-		})
 		return nil
 	}
 
@@ -538,14 +524,6 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 	}
 
 	delete(sm.sessions, sessionID)
-
-	// Persist cleared layout to profile config.json
-	saveLayoutToProfile(sess.ProfileID, sess.Name, &Session{
-		ID:    sessionID,
-		Name:  sess.Name,
-		Panes: make(map[string]*Pane),
-	})
-
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "close-session"})
 	return nil
 }
@@ -637,12 +615,20 @@ func convertToSavedLayoutNode(node *LayoutNode, panes map[string]*Pane) *config.
 }
 
 func saveLayoutToProfile(profileID, sessionName string, sess *Session) {
+	if sess == nil || sess.Layout == nil || len(sess.Panes) == 0 {
+		return // Never wipe out a profile's saved layout blueprint when session ends or has no panes
+	}
+
 	cfg, err := config.LoadConfig()
 	if err != nil || cfg == nil {
 		return
 	}
 
 	savedLayout := convertToSavedLayoutNode(sess.Layout, sess.Panes)
+	if savedLayout == nil {
+		return
+	}
+
 	updated := false
 	for i, prof := range cfg.Profiles {
 		if (profileID != "" && prof.ID == profileID) || prof.Name == sessionName || (len(prof.Name) > 0 && strings.HasPrefix(sessionName, prof.Name)) {

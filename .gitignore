@@ -1,0 +1,15 @@
+# Build outputs
+build/bin/
+*.exe
+*.syso
+
+# Node dependencies & dist
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Wails dev & system files
+.wails/
+.idea/
+.vscode/
+*.log

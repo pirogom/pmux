@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pmux - Terminal Multiplexer</title>
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar Navigation & Profiles -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <span class="brand-icon">⚡</span>
+                    <span class="brand-name">pmux</span>
+                </div>
+            </div>
+
+            <!-- Active Sessions List -->
+            <div id="section-sessions" class="sidebar-section">
+                <div id="header-sessions" class="sidebar-section-header collapsible" title="Toggle Active Sessions">
+                    <div class="sidebar-section-title-wrapper">
+                        <span class="chevron-icon">▼</span>
+                        <span class="sidebar-section-title">ACTIVE SESSIONS</span>
+                    </div>
+                </div>
+                <ul id="session-list" class="session-list"></ul>
+            </div>
+
+            <!-- Profiles List & Add Profile Button -->
+            <div id="section-profiles" class="sidebar-section flex-grow">
+                <div id="header-profiles" class="sidebar-section-header collapsible" title="Toggle Profiles">
+                    <div class="sidebar-section-title-wrapper">
+                        <span class="chevron-icon">▼</span>
+                        <span class="sidebar-section-title">PROFILES</span>
+                    </div>
+                    <button id="btn-add-profile" class="icon-btn-small" title="Add Profile">➕</button>
+                </div>
+                <ul id="profile-list" class="profile-list"></ul>
+            </div>
+        </aside>
+        <div id="sidebar-resizer" class="sidebar-resizer" title="Drag to resize sidebar"></div>
+
+        <!-- Main Terminal Workspace Container -->
+        <main class="main-content">
+            <!-- Top Controls Toolbar -->
+            <header class="top-bar">
+                <button id="btn-toggle-sidebar-top" class="icon-btn toolbar-toggle-btn" title="Toggle Sidebar">◀</button>
+                <div class="session-info">
+                    <div id="active-session-title" class="session-title" contenteditable="false" spellcheck="false" title="Click to edit session name">No Active Session</div>
+                    <button id="btn-rename-session" class="icon-btn-small hidden" title="Rename Active Session">✏️</button>
+                </div>
+                <div class="toolbar-actions">
+                    <button id="btn-split-v" class="btn btn-secondary" title="Split Vertical (Side-by-side)">
+                        <img src="./src/assets/images/split-vertical.svg" class="btn-icon" alt="">
+                        <span>Split Vertical</span>
+                    </button>
+                    <button id="btn-split-h" class="btn btn-secondary" title="Split Horizontal (Top-down)">
+                        <img src="./src/assets/images/split-horizontal.svg" class="btn-icon" alt="">
+                        <span>Split Horizontal</span>
+                    </button>
+                    <button id="btn-toggle-git" class="btn btn-outline" title="Toggle Git Status Panel">
+                        <span>🌿 Git</span>
+                        <span id="git-btn-badge" class="git-btn-badge hidden">0</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Terminal Workspace Area (Grid & Split Panes) -->
+            <div id="terminal-container" class="terminal-workspace">
+                <div id="empty-state" class="empty-state">
+                    <h2>Welcome to pmux</h2>
+                    <p>Select a profile from the left sidebar, or click the <strong>➕</strong> button to create a new profile to get started.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Collapsible Git Status Panel -->
+        <aside id="git-panel" class="git-panel hidden">
+            <div id="git-panel-resizer" class="git-panel-resizer" title="Drag to resize"></div>
+            <div class="panel-header">
+                <div class="panel-title">
+                    <span>🌿 Git Repository Status</span>
+                    <span id="git-branch-badge" class="badge">main</span>
+                </div>
+                <div class="panel-header-actions">
+                    <button id="btn-git-refresh" class="icon-btn" title="Refresh Git Status">🔄</button>
+                    <button id="btn-close-git" class="icon-btn" title="Close Panel">✖</button>
+                </div>
+            </div>
+            <div id="git-changes-container" class="git-changes-list">
+                <div class="git-empty">No git repository detected in active pane.</div>
+            </div>
+            <div id="git-log-output" class="git-log-output hidden"></div>
+            <div class="git-panel-footer">
+                <label for="git-poll-interval-select" class="git-footer-label">Refresh Interval:</label>
+                <select id="git-poll-interval-select" class="git-footer-select">
+                    <option value="1">1s</option>
+                    <option value="2">2s</option>
+                    <option value="3" selected>3s</option>
+                    <option value="4">4s</option>
+                    <option value="5">5s</option>
+                    <option value="6">6s</option>
+                    <option value="7">7s</option>
+                    <option value="8">8s</option>
+                    <option value="9">9s</option>
+                    <option value="10">10s</option>
+                </select>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Modal for Creating/Editing Profile -->
+    <div id="profile-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Create New Profile</h3>
+                <button id="btn-close-modal" class="icon-btn">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="prof-name">Profile Name</label>
+                    <input type="text" id="prof-name" placeholder="e.g. My MSYS2 MINGW64" />
+                </div>
+                <div class="form-group">
+                    <label for="prof-cmd">Command Path</label>
+                    <div class="input-with-btn">
+                        <input type="text" id="prof-cmd" placeholder="e.g. C:\msys64\msys2_shell.cmd" />
+                        <button id="btn-browse-cmd" class="btn btn-secondary btn-browse" type="button" title="Browse Executable">📁 Browse</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="prof-args">Arguments (comma separated)</label>
+                    <input type="text" id="prof-args" placeholder="e.g. -defterm,-here,-no-start,-mingw64,-use-full-path" />
+                </div>
+                <div class="form-group">
+                    <label for="prof-dir">Working Directory (Optional)</label>
+                    <div class="input-with-btn">
+                        <input type="text" id="prof-dir" placeholder="e.g D:\Project\pmux" />
+                        <button id="btn-browse-dir" class="btn btn-secondary btn-browse" type="button" title="Browse Directory">📁 Browse</button>
+                    </div>
+                </div>
+                <div class="preset-section">
+                    <label>Auto-Detected Presets</label>
+                    <div id="preset-buttons" class="preset-tags">
+                        <!-- Detected presets -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-profile" class="btn btn-secondary">Cancel</button>
+                <button id="btn-save-profile" class="btn btn-primary">Save Profile</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Confirm Modal -->
+    <div id="confirm-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3 id="confirm-title">Confirm</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message">Are you sure?</p>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-confirm-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-confirm-ok" class="btn btn-primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>

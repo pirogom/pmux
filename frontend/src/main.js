@@ -730,7 +730,11 @@ async function attachToSession(sessionId) {
     if (sess.activePaneId && activePanesMap.has(sess.activePaneId)) {
         setActivePane(sess.activePaneId, false);
     }
+    
+    // Immediate and staged reflow passes to guarantee layout calculation, screen repaint, and ConPTY resize sync
     reflowAllPanes(true);
+    setTimeout(() => reflowAllPanes(true), 60);
+    setTimeout(() => reflowAllPanes(true), 150);
 }
 
 function renderLayoutTree(node, sess, isRoot = true) {
@@ -974,7 +978,17 @@ function initXtermPane(containerEl, paneData) {
         // Re-attach existing term element
         const existing = activePanesMap.get(paneData.id);
         containerEl.appendChild(existing.element);
-        setTimeout(() => existing.fitAddon.fit(), 50);
+        setTimeout(() => {
+            try {
+                existing.fitAddon.fit();
+                if (existing.term) {
+                    existing.term.refresh(0, existing.term.rows - 1);
+                }
+                if (existing.ws && existing.ws.readyState === WebSocket.OPEN && existing.term && existing.term.cols >= 10 && existing.term.rows >= 3) {
+                    existing.ws.send(JSON.stringify({ type: 'resize', cols: existing.term.cols, rows: existing.term.rows }));
+                }
+            } catch(e) {}
+        }, 30);
         return;
     }
 

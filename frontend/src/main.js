@@ -764,7 +764,6 @@ function renderLayoutTree(node, sess, isRoot = true) {
         }
         paneEl.addEventListener('click', () => {
             setActivePane(node.id);
-            reflowAllPanes(true);
         });
 
         const paneData = sess.panes[node.id];
@@ -1228,13 +1227,6 @@ function setActivePane(paneId, notifyServer = true) {
     if (activePanesMap.has(paneId)) {
         const p = activePanesMap.get(paneId);
         p.term.focus();
-        try {
-            p.fitAddon.fit();
-            p.term.refresh(0, p.term.rows - 1);
-            if (p.ws && p.ws.readyState === WebSocket.OPEN && p.term.cols >= 10 && p.term.rows >= 3) {
-                p.ws.send(JSON.stringify({ type: 'resize', cols: p.term.cols, rows: p.term.rows }));
-            }
-        } catch(e) {}
     }
     updateGitStatus();
 

@@ -1221,6 +1221,8 @@ async function refreshConfigAndProfiles() {
     }
 }
 
+let editingProfileId = null;
+
 function renderProfileList() {
     profileListEl.innerHTML = '';
     if (!profiles || profiles.length === 0) {
@@ -1234,8 +1236,16 @@ function renderProfileList() {
 
     profiles.forEach(prof => {
         const li = document.createElement('li');
-        li.innerHTML = `<span>🐚 ${prof.name}</span><button class="icon-btn-small del-btn" title="Delete Profile">✖</button>`;
+        li.innerHTML = `<span>🐚 ${prof.name}</span>
+            <div class="item-actions">
+                <button class="icon-btn-small edit-btn" title="Edit Profile">✏️</button>
+                <button class="icon-btn-small del-btn" title="Delete Profile">✖</button>
+            </div>`;
         li.addEventListener('click', () => createSessionFromProfile(prof));
+        li.querySelector('.edit-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openProfileModal(prof);
+        });
         li.querySelector('.del-btn').addEventListener('click', async (e) => {
             e.stopPropagation();
             await deleteProfile(prof.id);
@@ -1247,17 +1257,36 @@ function renderProfileList() {
 async function deleteProfile(id) {
     const confirmed = await showConfirm('Delete Profile', 'Are you sure you want to delete this profile?');
     if (confirmed) {
-        if (window.go && window.go.main && window.go.main.App) {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.DeleteProfile) {
             await window.go.main.App.DeleteProfile(id);
-            await refreshConfigAndProfiles();
-            showToast('Profile deleted', 'success');
+        } else {
+            await apiPost('/api/profiles/delete', { id });
         }
+        await refreshConfigAndProfiles();
+        showToast('Profile deleted', 'success');
     }
 }
 
-async function openProfileModal() {
+async function openProfileModal(profToEdit = null) {
     profileModalEl.classList.remove('hidden');
     presetButtonsEl.innerHTML = '';
+
+    const modalTitle = document.getElementById('modal-title');
+    if (profToEdit) {
+        editingProfileId = profToEdit.id;
+        if (modalTitle) modalTitle.textContent = 'Edit Profile';
+        profNameInput.value = profToEdit.name || '';
+        profCmdInput.value = profToEdit.command || '';
+        profArgsInput.value = (profToEdit.args || []).join(',');
+        profDirInput.value = profToEdit.workDir || '';
+    } else {
+        editingProfileId = null;
+        if (modalTitle) modalTitle.textContent = 'Create New Profile';
+        profNameInput.value = '';
+        profCmdInput.value = '';
+        profArgsInput.value = '';
+        profDirInput.value = '';
+    }
 
     if (!detectedPresets || detectedPresets.length === 0) {
         try {
@@ -1292,6 +1321,7 @@ async function openProfileModal() {
 }
 
 function closeProfileModal() {
+    editingProfileId = null;
     profileModalEl.classList.add('hidden');
 }
 
@@ -1306,15 +1336,28 @@ async function saveProfileFromModal() {
         return;
     }
 
-    const args = argsStr ? argsStr.split(',').map(s => s.trim()) : [];
-    const prof = { name, command, args, workDir };
+    const args = argsStr ? argsStr.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const isEdit = !!editingProfileId;
+    const prof = { 
+        id: editingProfileId || '',
+        name, 
+        command, 
+        args, 
+        workDir 
+    };
 
-    if (window.go && window.go.main && window.go.main.App) {
-        await window.go.main.App.SaveProfile(prof);
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveProfile) {
+            await window.go.main.App.SaveProfile(prof);
+        } else {
+            await apiPost('/api/profiles', prof);
+        }
         await refreshConfigAndProfiles();
-        showToast('Profile saved', 'success');
+        showToast(isEdit ? 'Profile updated' : 'Profile created', 'success');
+        closeProfileModal();
+    } catch (e) {
+        showToast(`Failed to save profile: ${e.message || e}`, 'error');
     }
-    closeProfileModal();
 }
 
 // Git Status Collapsible Floating Panel & Resizer

@@ -94,6 +94,9 @@ func (a *App) SaveProfile(p config.Profile) error {
 	found := false
 	for i, existing := range cfg.Profiles {
 		if existing.ID == p.ID {
+			if p.SavedLayout == nil && existing.SavedLayout != nil {
+				p.SavedLayout = existing.SavedLayout
+			}
 			cfg.Profiles[i] = p
 			found = true
 			break

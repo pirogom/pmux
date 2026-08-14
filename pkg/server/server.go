@@ -337,6 +337,43 @@ func (s *Server) handleProfilesNotifyChange(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodPost {
+		var p config.Profile
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		found := false
+		for i, existing := range cfg.Profiles {
+			if existing.ID == p.ID {
+				if p.SavedLayout == nil && existing.SavedLayout != nil {
+					p.SavedLayout = existing.SavedLayout
+				}
+				cfg.Profiles[i] = p
+				found = true
+				break
+			}
+		}
+		if !found {
+			if p.ID == "" {
+				p.ID = fmt.Sprintf("profile_%d", len(cfg.Profiles)+1)
+			}
+			cfg.Profiles = append(cfg.Profiles, p)
+		}
+		if err := config.SaveConfig(cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.BroadcastEvent("profiles_updated", nil)
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

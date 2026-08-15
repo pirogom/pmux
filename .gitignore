@@ -2,6 +2,8 @@
 build/bin/
 *.exe
 *.syso
+# Bundled ConPTY host redistributable (see resources/conpty/, pkg/conpty/conpty_windows.go)
+!resources/conpty/**/*.exe
 
 # Node dependencies & dist
 node_modules/

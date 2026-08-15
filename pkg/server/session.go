@@ -4,15 +4,28 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"pmux/pkg/config"
 	"pmux/pkg/conpty"
 )
+
+// paneEnv returns the current process environment plus a WT_SESSION marker.
+// Windows Terminal injects WT_SESSION into shells it launches via ConPTY;
+// MSYS2's -defterm runtime appears to use its presence to pick a console
+// handling path that survives Ctrl+C without losing the ConPTY connection.
+// Without it, MSYS2's console reattachment can detach the shell from our
+// pseudo console (observed as an EOF on OutPipe while the root process is
+// still STILL_ACTIVE), which pmux would otherwise mistake for a dead pane.
+func paneEnv() []string {
+	return append(os.Environ(), "WT_SESSION="+uuid.NewString())
+}
 
 type SplitDirection string
 
@@ -40,8 +53,13 @@ type Pane struct {
 	Buffer      *RingBuffer              `json:"-"`
 	Clients     map[*websocket.Conn]bool `json:"-"`
 	resizeTimer *time.Timer
-	onExit      func(sessionID, paneID string)
-	mu          sync.Mutex
+	// onExit is invoked when the read loop ends. keepProcessAlive is true when
+	// the ConPTY output pipe closed (EOF) while the root process was still
+	// STILL_ACTIVE — an anomaly (observed with MSYS2 -defterm shells) rather
+	// than a genuine process exit, so the still-running process must not be
+	// force-killed.
+	onExit func(sessionID, paneID string, keepProcessAlive bool)
+	mu     sync.Mutex
 }
 
 func (p *Pane) TriggerResize(cols, rows int) {
@@ -117,6 +135,7 @@ type SessionManager struct {
 	sessions    map[string]*Session
 	panes       map[string]*Pane
 	broadcaster EventBroadcaster
+	orphans     *OrphanTracker
 	mu          sync.RWMutex
 }
 
@@ -124,7 +143,15 @@ func NewSessionManager() *SessionManager {
 	return &SessionManager{
 		sessions: make(map[string]*Session),
 		panes:    make(map[string]*Pane),
+		orphans:  NewOrphanTracker(),
 	}
+}
+
+// ShutdownOrphans terminates any processes left running by the
+// forceKill=false path in closePaneInternal, ignoring their grace period.
+// Call before the pmux server process exits.
+func (sm *SessionManager) ShutdownOrphans() {
+	sm.orphans.Shutdown()
 }
 
 func (sm *SessionManager) SetBroadcaster(b EventBroadcaster) {
@@ -186,7 +213,7 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 
 	// 3. Default single-pane creation
 	paneID := fmt.Sprintf("pane_%d_1", now)
-	ptyInst, err := conpty.New(command, args, workDir, nil, cols, rows)
+	ptyInst, err := conpty.New(command, args, workDir, paneEnv(), cols, rows)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
@@ -202,8 +229,8 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
 		Clients:   make(map[*websocket.Conn]bool),
-		onExit: func(sID, pID string) {
-			_ = sm.ClosePane(sID, pID)
+		onExit: func(sID, pID string, keepProcessAlive bool) {
+			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 		},
 	}
 
@@ -241,7 +268,7 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 			cmd = "cmd.exe"
 		}
 
-		ptyInst, err := conpty.New(cmd, node.Args, node.WorkDir, nil, cols, rows)
+		ptyInst, err := conpty.New(cmd, node.Args, node.WorkDir, paneEnv(), cols, rows)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -257,8 +284,8 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 			PTY:       ptyInst,
 			Buffer:    NewRingBuffer(512 * 1024),
 			Clients:   make(map[*websocket.Conn]bool),
-			onExit: func(sID, pID string) {
-				_ = sm.ClosePane(sID, pID)
+			onExit: func(sID, pID string, keepProcessAlive bool) {
+				_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 			},
 		}
 
@@ -337,7 +364,7 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 
 	paneID := fmt.Sprintf("pane_split_%d", time.Now().UnixNano())
 
-	ptyInst, err := conpty.New(command, args, workDir, nil, cols, rows)
+	ptyInst, err := conpty.New(command, args, workDir, paneEnv(), cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
@@ -353,8 +380,8 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
 		Clients:   make(map[*websocket.Conn]bool),
-		onExit: func(sID, pID string) {
-			_ = sm.ClosePane(sID, pID)
+		onExit: func(sID, pID string, keepProcessAlive bool) {
+			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 		},
 	}
 
@@ -399,9 +426,14 @@ func insertLayoutNode(current *LayoutNode, parentID, newID string, dir SplitDire
 	return current
 }
 
+// stillActiveExitCode is the Win32 STILL_ACTIVE sentinel returned by
+// GetExitCodeProcess for a process that has not exited yet.
+const stillActiveExitCode = 259
+
 func (p *Pane) readLoop() {
 	log.Printf("[conpty server] Starting read loop for pane %s (PID: %d)", p.ID, p.PTY.Pid)
 	buf := make([]byte, 32768) // 32KB buffer for fast ANSI sequence draining
+	stillActive := false
 	for {
 		n, err := p.PTY.OutPipe.Read(buf)
 		if n > 0 {
@@ -427,13 +459,23 @@ func (p *Pane) readLoop() {
 			}
 		}
 		if err != nil {
-			log.Printf("[conpty exit] Pane %s read loop ended: %v", p.ID, err)
+			exitCode, exitErr := p.PTY.ExitCode()
+			if exitErr != nil {
+				log.Printf("[conpty exit] Pane %s (root PID %d) read loop ended: %v (root exit code lookup failed: %v)", p.ID, p.PTY.Pid, err, exitErr)
+			} else {
+				log.Printf("[conpty exit] Pane %s (root PID %d) read loop ended: %v (root process exit code: %d)", p.ID, p.PTY.Pid, err, exitCode)
+			}
+			// The pipe closing does not always mean the process died: MSYS2's
+			// -defterm runtime can detach a still-running shell from our
+			// pseudo console (root exit code still STILL_ACTIVE=259). In that
+			// case don't TerminateProcess a shell that never actually exited.
+			stillActive = exitErr == nil && exitCode == stillActiveExitCode
 			break
 		}
 	}
 
 	if p.onExit != nil {
-		go p.onExit(p.SessionID, p.ID)
+		go p.onExit(p.SessionID, p.ID, stillActive)
 	}
 }
 
@@ -470,7 +512,18 @@ func (sm *SessionManager) GetPane(paneID string) (*Pane, bool) {
 	return pane, ok
 }
 
+// ClosePane closes a pane and terminates its process. Use for user-initiated
+// pane closure, where the underlying process should always be killed.
 func (sm *SessionManager) ClosePane(sessionID, paneID string) error {
+	return sm.closePaneInternal(sessionID, paneID, true)
+}
+
+// closePaneInternal tears down a pane's websocket/session state. When
+// forceKill is false, the pane's process is left running instead of being
+// terminated — used when the ConPTY pipe closed while the root process was
+// still STILL_ACTIVE (see readLoop), so pmux doesn't kill a shell that never
+// actually exited.
+func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill bool) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -485,7 +538,14 @@ func (sm *SessionManager) ClosePane(sessionID, paneID string) error {
 	}
 
 	if pane.PTY != nil {
-		pane.PTY.Close()
+		if forceKill {
+			pane.PTY.Close()
+		} else {
+			log.Printf("[conpty exit] Pane %s: root process still active, skipping TerminateProcess", paneID)
+			pid := pane.PTY.Pid
+			pane.PTY.CloseKeepProcess()
+			sm.orphans.Track(pid, sessionID, paneID)
+		}
 	}
 
 	pane.mu.Lock()

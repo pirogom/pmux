@@ -118,6 +118,38 @@ wails build
 
 ---
 
+## 🔌 ConPTY 호스트 (conpty.dll / OpenConsole.exe)
+
+pmux는 ConPTY 세션을 만들 때 OS에 내장된 `conhost.exe`를 그대로 쓰지 않습니다. 대신 Microsoft가 공식적으로 재배포 가능한 형태로 제공하는 ConPTY 호스트 — `conpty.dll` + `OpenConsole.exe` (Windows Terminal이 자체적으로 번들하는 것과 동일한 소스, MIT 라이선스) — 를 `go:embed`로 `pmux.exe` 바이너리 안에 직접 내장해서 사용합니다. 이는 실제로 발견된 호환성 버그를 우회하기 위한 조치입니다: MSYS2 `-defterm` 셸(예: `msys2_shell.cmd -defterm -here -no-start -mingw64`)에서 포그라운드 프로세스를 Ctrl+C로 중단할 때 ConPTY 연결이 끊기면서 pane이 강제로 종료되는 현상이 있었는데, 이는 일부 버전의 시스템 `conhost.exe`에서만 발생하고 Windows Terminal이 쓰는 `OpenConsole.exe` 빌드에서는 재현되지 않았습니다.
+
+- 원본 바이너리는 `resources/conpty/x64/`, `resources/conpty/x86/`에 있고, 빌드 태그(`resources/conpty/embed_amd64.go`, `embed_386.go`)로 아키텍처별로 분리되어 embed되므로 실제 빌드에는 자기 아키텍처에 맞는 쌍만 포함됩니다.
+- 최초 실행 시 이 두 파일을 `%USERPROFILE%\.pmux\bin\64\`(386 빌드는 `\32\`)에 추출하고(embed된 내용의 해시가 다르면 자동 갱신), 그 경로의 `conpty.dll`을 로드합니다 — 별도 설치 과정 없이 `pmux.exe` 단독 실행 파일만으로 동작합니다. 만약 `pmux.exe`와 같은 폴더에 이미 `conpty.dll`이 놓여있다면(수동 배치 등) 그쪽을 우선 사용합니다. 둘 다 사용할 수 없으면 기존처럼 OS의 `kernel32.dll`/시스템 `conhost.exe`로 자동 폴백합니다.
+
+### ConPTY 호스트 버전 갱신 방법
+
+Microsoft가 중요한 수정사항을 배포하면 공식 NuGet 패키지에서 받아 번들 파일을 교체하면 됩니다. **`conpty.dll`과 `OpenConsole.exe`는 반드시 짝이 맞는 버전으로 함께 교체해야 합니다** — 버전이 어긋나면 "No process is on the other end of the pipe" 같은 크래시가 발생하는 것으로 알려져 있습니다.
+
+```powershell
+# 1. 사용 가능한 버전 확인
+curl -s https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/index.json
+
+# 2. 원하는 버전 다운로드 (버전 문자열 수정)
+curl -sL -o conpty.nupkg "https://www.nuget.org/api/v2/package/Microsoft.Windows.Console.ConPTY/<version>"
+
+# 3. nupkg는 zip 파일이므로 압축 해제
+Expand-Archive conpty.nupkg -DestinationPath conpty_pkg
+
+# 4. 아키텍처별로 매칭되는 쌍을 기존 파일에 덮어쓰기
+#    x64: runtimes\win-x64\native\conpty.dll  ->  resources\conpty\x64\conpty.dll
+#         build\native\runtimes\x64\OpenConsole.exe -> resources\conpty\x64\OpenConsole.exe
+#    x86: runtimes\win-x86\native\conpty.dll  ->  resources\conpty\x86\conpty.dll
+#         build\native\runtimes\x86\OpenConsole.exe -> resources\conpty\x86\OpenConsole.exe
+```
+
+파일 교체 후 다시 빌드(`wails build` 또는 `go build`)하면 됩니다. 다음 실행 시 pmux가 embed된 내용의 해시 변경을 자동으로 감지해서 `%USERPROFILE%\.pmux\bin\`을 알아서 갱신하므로 수동 정리는 필요 없습니다.
+
+---
+
 ## 📄 라이선스 (License)
 
 본 프로젝트는 MIT 라이선스에 따라 배포됩니다. 자세한 내용은 `LICENSE` 파일을 참조하세요.

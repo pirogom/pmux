@@ -118,6 +118,38 @@ The compiled executable will be located in the `build/bin/` directory.
 
 ---
 
+## 🔌 ConPTY Host (conpty.dll / OpenConsole.exe)
+
+pmux does **not** rely on the OS's built-in `conhost.exe` for its ConPTY sessions. Instead it embeds Microsoft's official redistributable ConPTY host — `conpty.dll` + `OpenConsole.exe` (same source as Windows Terminal's own bundled host, MIT licensed) — directly into the `pmux.exe` binary via `go:embed`. This works around a real compatibility bug where MSYS2 `-defterm` shells (e.g. `msys2_shell.cmd -defterm -here -no-start -mingw64`) could lose their ConPTY connection and get force-closed when interrupting a foreground process with Ctrl+C — a bug present in some versions of the system `conhost.exe` but not in Windows Terminal's `OpenConsole.exe` build.
+
+- Source binaries live under `resources/conpty/x64/` and `resources/conpty/x86/`, embedded per-architecture via build tags (`resources/conpty/embed_amd64.go`, `embed_386.go`) so a given build only carries the pair matching its own architecture.
+- On first use, pmux extracts (and, if the embedded content hash differs, refreshes) these two files to `%USERPROFILE%\.pmux\bin\64\` (or `\32\` for a 386 build) and loads `conpty.dll` from there — no installer step required, `pmux.exe` works standalone. If a `conpty.dll` happens to already sit next to `pmux.exe` (e.g. manual placement), that takes priority instead. If neither is usable, pmux transparently falls back to the OS's `kernel32.dll`/system `conhost.exe`.
+
+### Updating to a newer ConPTY host version
+
+If Microsoft ships an important fix, update the bundled pair from the official NuGet package — **`conpty.dll` and `OpenConsole.exe` must always be replaced together as a matched version pair**; mixing versions is known to cause "No process is on the other end of the pipe"-style crashes.
+
+```powershell
+# 1. Check available versions
+curl -s https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/index.json
+
+# 2. Download a specific version (adjust the version string)
+curl -sL -o conpty.nupkg "https://www.nuget.org/api/v2/package/Microsoft.Windows.Console.ConPTY/<version>"
+
+# 3. It's a zip — extract it
+Expand-Archive conpty.nupkg -DestinationPath conpty_pkg
+
+# 4. Copy the matched pair over the existing files, per architecture
+#    x64: runtimes\win-x64\native\conpty.dll  ->  resources\conpty\x64\conpty.dll
+#         build\native\runtimes\x64\OpenConsole.exe -> resources\conpty\x64\OpenConsole.exe
+#    x86: runtimes\win-x86\native\conpty.dll  ->  resources\conpty\x86\conpty.dll
+#         build\native\runtimes\x86\OpenConsole.exe -> resources\conpty\x86\OpenConsole.exe
+```
+
+After replacing the files, rebuild (`wails build` or `go build`). On the next run, pmux detects the embedded content hash changed and automatically refreshes `%USERPROFILE%\.pmux\bin\` — no manual cleanup needed.
+
+---
+
 ## 📄 License
 
 Distributed under the MIT License. See `LICENSE` for details.

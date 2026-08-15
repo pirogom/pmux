@@ -4,6 +4,8 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -23,6 +25,7 @@ func main() {
 	isStopMode := flag.Bool("stop", false, "Stop running background daemon server")
 	isKillMode := flag.Bool("kill", false, "Stop running background daemon server (alias for --stop)")
 	isHelpMode := flag.Bool("help", false, "Display help message")
+	isLogMode := flag.Bool("log", false, "Enable log output to console")
 
 	flag.Usage = func() {
 		fmt.Println("pmux - Terminal Multiplexer for Windows (tmux alternative)")
@@ -35,6 +38,7 @@ func main() {
 		fmt.Println("  --stop, --kill   Stop running background daemon server")
 		fmt.Println("  --server         Run in background daemon server mode")
 		fmt.Println("  --port <number>  Server listen port (default: 4799)")
+		fmt.Println("  --log            Enable log output to console")
 		fmt.Println("  --help, -h       Display this help message")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -42,9 +46,14 @@ func main() {
 		fmt.Println("  pmux --status    Check daemon server status")
 		fmt.Println("  pmux --stop      Stop running daemon server")
 		fmt.Println("  pmux --server    Start daemon server manually")
+		fmt.Println("  pmux --server --log   Start daemon server manually with log output")
 	}
 
 	flag.Parse()
+
+	if !*isLogMode {
+		log.SetOutput(io.Discard)
+	}
 
 	if *isHelpMode {
 		flag.Usage()

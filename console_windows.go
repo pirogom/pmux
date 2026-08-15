@@ -3,6 +3,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"syscall"
 )
@@ -24,5 +25,8 @@ func attachConsole() {
 		if err == nil {
 			os.Stderr = stderr
 		}
+		// log's default logger captured the original (pre-attach) os.Stderr at
+		// package-init time; re-point it or every log.Printf call is silently lost.
+		log.SetOutput(os.Stderr)
 	}
 }

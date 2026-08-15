@@ -424,6 +424,7 @@ func (s *Server) handleKillServer(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
+		s.sessionMgr.ShutdownOrphans()
 		os.Exit(0)
 	}()
 }

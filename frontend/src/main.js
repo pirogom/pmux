@@ -1112,6 +1112,7 @@ function initXtermPane(containerEl, paneData) {
     let retryCount = 0;
     let hasEverConnected = false;
     let isReconnecting = false;
+    let isWritingServerOutput = false;
 
     const connectPaneWS = () => {
         const wsUrl = `ws://127.0.0.1:${serverPort}/ws/pane/${paneData.id}`;
@@ -1136,8 +1137,6 @@ function initXtermPane(containerEl, paneData) {
                 } catch (e) {}
             }, 200);
         };
-
-        let isWritingServerOutput = false;
 
         ws.onmessage = async (event) => {
             let text = '';

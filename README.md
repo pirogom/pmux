@@ -117,6 +117,13 @@ The compiled executable will be located in the `build/bin/` directory.
 - Click the **ACTIVE SESSIONS** or **PROFILES** section headers to toggle section visibility.
 - Collapse **PROFILES** to give **ACTIVE SESSIONS** maximum vertical space for long session lists.
 
+### 4. Clipboard Copy/Paste & Terminal Control Character (`^V`)
+- **Copy**: Select text and press `Ctrl + C` to copy to clipboard. (When no text is selected, `Ctrl + C` sends standard SIGINT `^C` to the active process).
+- **Paste**: Press `Ctrl + V` or `Shift + Ctrl + V` to paste clipboard contents into the terminal.
+- **Send `^V` Control Character (Vim Visual Block / Bash Literal Next)**:
+  - To prevent conflicts with Windows clipboard paste shortcuts, the terminal control character **`^V` (`ASCII 0x16`)** is mapped to **`Alt + V`**.
+  - In Vim, press **`Alt + V`** to enter Visual Block mode, or in Bash to input literal control characters (Literal Next).
+
 ---
 
 ## 🔌 ConPTY Host (conpty.dll / OpenConsole.exe)

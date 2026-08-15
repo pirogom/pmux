@@ -117,6 +117,13 @@ wails build
 - **ACTIVE SESSIONS** 또는 **PROFILES** 섹션 헤더를 클릭하여 접거나 펼칠 수 있습니다.
 - **PROFILES**를 접으면 **ACTIVE SESSIONS** 영역이 높이를 가득 채워 긴 세션 목록도 시원하게 확인할 수 있습니다.
 
+### 4. 클립보드 복사/붙여넣기 및 터미널 제어 문자 (`^V`)
+- **복사 (Copy)**: 텍스트를 드래그하여 선택한 상태에서 `Ctrl + C`를 누르면 클립보드에 복사됩니다. (선택 영역이 없을 때 `Ctrl + C`는 터미널 프로세스 인터럽트 `^C`로 동작합니다.)
+- **붙여넣기 (Paste)**: `Ctrl + V` 또는 `Shift + Ctrl + V`를 누르면 클립보드 내용이 터미널에 붙여넣어집니다.
+- **제어 문자 `^V` 전송 (Vim Visual Block / Bash Literal Next)**:
+  - Windows의 기본 붙여넣기 단축키와의 충돌을 피하기 위해, 터미널 제어 문자 **`^V` (`ASCII 0x16`)**는 **`Alt + V`**로 매핑되어 있습니다.
+  - Vim에서 세로 블록 선택(Visual Block) 모드로 진입하거나, Bash에서 특수 키 이스케이프(Literal Next)를 입력할 때는 **`Alt + V`**를 누르면 됩니다.
+
 ---
 
 ## 🔌 ConPTY 호스트 (conpty.dll / OpenConsole.exe)

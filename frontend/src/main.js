@@ -1199,14 +1199,6 @@ function initXtermPane(containerEl, paneData) {
     const ws = connectPaneWS();
 
     term.onData((data) => {
-        // Filter out ANSI DA (Device Attributes) and CPR (Cursor Position Report) automatic responses
-        // that xterm emits during heavy ANSI rendering (e.g., \x1b[?1;2c, \x1b[1;2c, \x1b[<row>;<col>R)
-        if (typeof data === 'string') {
-            if (/^\x1b\[(\?|>|=)?[0-9;]*c$/.test(data) || /^\x1b\[[0-9]+;[0-9]+R$/.test(data)) {
-                return;
-            }
-        }
-
         const paneEntry = activePanesMap.get(paneData.id);
         const currentWS = paneEntry ? paneEntry.ws : ws;
         if (currentWS && currentWS.readyState === WebSocket.OPEN) {
@@ -1238,15 +1230,21 @@ function initXtermPane(containerEl, paneData) {
                 return true;
             }
 
-            if (isCtrlV) {
-                if (event.shiftKey) {
-                    // Ctrl + Shift + V: Traditional Literal Next (^V / \x16)
-                    return true;
-                } else {
-                    // Ctrl + V: Prevent xterm from sending \x16 to backend,
-                    // allowing browser native 'paste' event to handle clipboard paste exactly once.
-                    return false;
+            // Alt + V: Send literal ^V (\x16, Literal Next / Visual Block) to terminal backend
+            if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyV') {
+                event.preventDefault();
+                const paneEntry = activePanesMap.get(paneData.id);
+                const currentWS = paneEntry ? paneEntry.ws : ws;
+                if (currentWS && currentWS.readyState === WebSocket.OPEN) {
+                    currentWS.send(JSON.stringify({ type: 'input', data: '\x16' }));
                 }
+                return false;
+            }
+
+            if (isCtrlV) {
+                // Ctrl + V & Shift + Ctrl + V: Prevent xterm from sending raw \x16 to backend,
+                // allowing browser native 'paste' event to handle clipboard paste smoothly.
+                return false;
             }
         }
         return true;

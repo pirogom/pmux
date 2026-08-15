@@ -15,15 +15,44 @@ import (
 	"pmux/pkg/conpty"
 )
 
-// paneEnv returns the current process environment plus a WT_SESSION marker.
+// paneEnv returns the current process environment plus WT_SESSION, MSYS, CYGWIN, TERM, and COLORTERM markers.
 // Windows Terminal injects WT_SESSION into shells it launches via ConPTY;
 // MSYS2's -defterm runtime appears to use its presence to pick a console
 // handling path that survives Ctrl+C without losing the ConPTY connection.
-// Without it, MSYS2's console reattachment can detach the shell from our
-// pseudo console (observed as an EOF on OutPipe while the root process is
-// still STILL_ACTIVE), which pmux would otherwise mistake for a dead pane.
+// In addition, MSYS=enable_pcon and CYGWIN=enable_pcon ensure MSYS2/Cygwin tools
+// (such as MSYS2's OpenSSH /usr/bin/ssh) use ConPTY natively rather than attempting
+// to allocate named pipe POSIX pseudo-terminals that hang without terminal output.
+// TERM=xterm-256color ensures full-featured ANSI sequence negotiation for ssh, vim, etc.
 func paneEnv() []string {
-	return append(os.Environ(), "WT_SESSION="+uuid.NewString())
+	env := os.Environ()
+	env = append(env, "WT_SESSION="+uuid.NewString())
+
+	var hasMsys, hasCygwin, hasTerm, hasColorTerm bool
+	for _, kv := range env {
+		upper := strings.ToUpper(kv)
+		if strings.HasPrefix(upper, "MSYS=") {
+			hasMsys = true
+		} else if strings.HasPrefix(upper, "CYGWIN=") {
+			hasCygwin = true
+		} else if strings.HasPrefix(upper, "TERM=") {
+			hasTerm = true
+		} else if strings.HasPrefix(upper, "COLORTERM=") {
+			hasColorTerm = true
+		}
+	}
+	if !hasMsys {
+		env = append(env, "MSYS=enable_pcon")
+	}
+	if !hasCygwin {
+		env = append(env, "CYGWIN=enable_pcon")
+	}
+	if !hasTerm {
+		env = append(env, "TERM=xterm-256color")
+	}
+	if !hasColorTerm {
+		env = append(env, "COLORTERM=truecolor")
+	}
+	return env
 }
 
 type SplitDirection string

@@ -737,11 +737,18 @@ async function createSessionFromProfile(prof) {
     }
 }
 
-function cleanupInactivePanes(sess) {
-    if (!sess || !sess.panes) return;
+function cleanupOrphanPanes() {
+    // Collect all valid pane IDs across all active sessions
+    const validPaneIds = new Set();
+    sessions.forEach(s => {
+        if (s && s.panes) {
+            Object.keys(s.panes).forEach(id => validPaneIds.add(id));
+        }
+    });
+
     activePanesMap.forEach((entry, paneId) => {
-        if (!sess.panes[paneId]) {
-            // Pane was closed remotely or removed from layout
+        if (!validPaneIds.has(paneId)) {
+            // Pane was closed or no longer exists in any session
             try {
                 if (entry.ws) {
                     entry.ws.onclose = null; // Prevent reconnect
@@ -787,8 +794,8 @@ async function attachToSession(sessionId) {
     if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.remove('hidden');
     renderSessionList();
 
-    // Cleanup any deleted/inactive panes from activePanesMap
-    cleanupInactivePanes(sess);
+    // Cleanup any deleted/orphan panes from activePanesMap (across all sessions)
+    cleanupOrphanPanes();
 
     // Render Terminal Grid layout
     terminalWorkspaceEl.innerHTML = '';
@@ -1130,6 +1137,8 @@ function initXtermPane(containerEl, paneData) {
             }, 200);
         };
 
+        let isWritingServerOutput = false;
+
         ws.onmessage = async (event) => {
             let text = '';
             if (typeof event.data === 'string') {
@@ -1138,7 +1147,13 @@ function initXtermPane(containerEl, paneData) {
                 text = await event.data.text();
             }
             if (text) {
-                term.write(text);
+                isWritingServerOutput = true;
+                try {
+                    term.write(text);
+                } finally {
+                    // Reset flag synchronously after write & microtask queue
+                    isWritingServerOutput = false;
+                }
             }
         };
 
@@ -1186,6 +1201,17 @@ function initXtermPane(containerEl, paneData) {
     const ws = connectPaneWS();
 
     term.onData((data) => {
+        // Suppress automatic terminal query responses triggered while parsing server output / history
+        if (isWritingServerOutput) {
+            return;
+        }
+
+        // Filter out ANSI DA (Device Attributes) reports (e.g., \x1b[?1;2c, \x1b[>0;...c, \x1b[1;2c)
+        // that could leak into the Windows console shell prompt as '1;2c'
+        if (typeof data === 'string' && /^\x1b\[(\?|>|=)?[0-9;]*c$/.test(data)) {
+            return;
+        }
+
         const paneEntry = activePanesMap.get(paneData.id);
         const currentWS = paneEntry ? paneEntry.ws : ws;
         if (currentWS && currentWS.readyState === WebSocket.OPEN) {

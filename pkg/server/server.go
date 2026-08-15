@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -343,6 +344,12 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		p.Name = strings.TrimSpace(p.Name)
+		runes := []rune(p.Name)
+		if len(runes) > 256 {
+			p.Name = string(runes[:256])
+		}
+
 		cfg, err := config.LoadConfig()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

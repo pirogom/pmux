@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"pmux/pkg/config"
 	"pmux/pkg/git"
@@ -87,6 +88,12 @@ func (a *App) SaveGitPollInterval(interval int) error {
 }
 
 func (a *App) SaveProfile(p config.Profile) error {
+	p.Name = strings.TrimSpace(p.Name)
+	runes := []rune(p.Name)
+	if len(runes) > 256 {
+		p.Name = string(runes[:256])
+	}
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return err

@@ -333,6 +333,10 @@ func (sm *SessionManager) RenameSession(sessionID, newName string) error {
 	if newName == "" {
 		return fmt.Errorf("session name cannot be empty")
 	}
+	runes := []rune(newName)
+	if len(runes) > 256 {
+		newName = string(runes[:256])
+	}
 
 	sess.Name = newName
 	saveLayoutToProfile(sess.ProfileID, sess.Name, sess)

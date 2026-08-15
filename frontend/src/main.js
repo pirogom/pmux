@@ -423,6 +423,21 @@ function setupEventListeners() {
 
     if (activeSessionTitleEl) {
         activeSessionTitleEl.addEventListener('click', () => startEditingSessionTitle());
+        activeSessionTitleEl.addEventListener('input', () => {
+            const raw = activeSessionTitleEl.innerText || activeSessionTitleEl.textContent || '';
+            if (raw.length > 256) {
+                const trimmed = raw.slice(0, 256);
+                activeSessionTitleEl.textContent = trimmed;
+                try {
+                    const range = document.createRange();
+                    range.selectNodeContents(activeSessionTitleEl);
+                    range.collapse(false);
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                } catch (e) {}
+            }
+        });
         activeSessionTitleEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -529,10 +544,22 @@ async function refreshSessions() {
                 throw e;
             }
         }
-        renderSessionList();
-        if (sessions.length > 0 && !activeSession) {
+
+        if (activeSession) {
+            const updatedActiveSess = sessions.find(s => s.id === activeSession.id);
+            if (updatedActiveSess) {
+                activeSession = updatedActiveSess;
+                if (!isEditingSessionTitle) {
+                    setSessionTitle(activeSession.name);
+                }
+            } else if (sessions.length === 0) {
+                showEmptyState();
+            }
+        } else if (sessions.length > 0) {
             attachToSession(sessions[0].id);
         }
+
+        renderSessionList();
     } catch (e) {
         console.error('Failed to refresh sessions:', e);
     }
@@ -551,6 +578,7 @@ function renderSessionList() {
 
     sessions.forEach(sess => {
         const li = document.createElement('li');
+        li.title = sess.name;
         li.innerHTML = `<span>💻 ${sess.name}</span><button class="icon-btn-small del-btn" title="Close Session">✖</button>`;
         if (activeSession && activeSession.id === sess.id) {
             li.classList.add('active');
@@ -619,6 +647,13 @@ function generateSessionName(profName) {
     return `${baseName} #${num}`;
 }
 
+function setSessionTitle(name) {
+    if (!activeSessionTitleEl) return;
+    activeSessionTitleEl.textContent = name;
+    activeSessionTitleEl.title = name;
+    activeSessionTitleEl.scrollLeft = 0;
+}
+
 let isEditingSessionTitle = false;
 
 function startEditingSessionTitle() {
@@ -640,12 +675,17 @@ async function finishEditingSessionTitle(commit = true) {
     if (!isEditingSessionTitle) return;
     isEditingSessionTitle = false;
     activeSessionTitleEl.contentEditable = "false";
+    activeSessionTitleEl.scrollLeft = 0;
 
     if (!activeSession) return;
 
-    const newName = activeSessionTitleEl.textContent.trim();
+    const rawText = activeSessionTitleEl.innerText || activeSessionTitleEl.textContent || '';
+    let newName = rawText.replace(/\u00a0/g, ' ').replace(/[\r\n]+/g, ' ').trim();
+    if (newName.length > 256) {
+        newName = newName.slice(0, 256).trim();
+    }
     if (!commit || !newName || newName === activeSession.name) {
-        activeSessionTitleEl.textContent = activeSession.name;
+        setSessionTitle(activeSession.name);
         return;
     }
 
@@ -655,10 +695,12 @@ async function finishEditingSessionTitle(commit = true) {
         } else {
             await apiPost('/api/sessions/rename', { sessionId: activeSession.id, newName });
         }
+        activeSession.name = newName;
+        setSessionTitle(newName);
         await refreshSessions();
         showToast(`Session renamed to "${newName}"`, 'info');
     } catch (e) {
-        activeSessionTitleEl.textContent = activeSession.name;
+        setSessionTitle(activeSession ? activeSession.name : 'No Active Session');
         showToast('Failed to rename session: ' + (e.message || e), 'error');
     }
 }
@@ -720,7 +762,7 @@ function cleanupInactivePanes(sess) {
 function showEmptyState() {
     activeSession = null;
     activePaneId = null;
-    if (activeSessionTitleEl) activeSessionTitleEl.textContent = 'No Active Session';
+    setSessionTitle('No Active Session');
     if (btnRenameSessionEl) btnRenameSessionEl.classList.add('hidden');
     if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.add('hidden');
     if (terminalWorkspaceEl) terminalWorkspaceEl.innerHTML = '';
@@ -740,7 +782,7 @@ async function attachToSession(sessionId) {
     }
 
     activeSession = sess;
-    activeSessionTitleEl.textContent = sess.name;
+    setSessionTitle(sess.name);
     if (btnRenameSessionEl) btnRenameSessionEl.classList.remove('hidden');
     if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.remove('hidden');
     renderSessionList();
@@ -1388,6 +1430,7 @@ function renderProfileList() {
 
     profiles.forEach(prof => {
         const li = document.createElement('li');
+        li.title = prof.name;
         li.innerHTML = `<span>🐚 ${prof.name}</span>
             <div class="item-actions">
                 <button class="icon-btn-small edit-btn" title="Edit Profile">✏️</button>
@@ -1478,10 +1521,14 @@ function closeProfileModal() {
 }
 
 async function saveProfileFromModal() {
-    const name = profNameInput.value.trim();
+    let name = profNameInput.value.trim();
     const command = profCmdInput.value.trim();
     const argsStr = profArgsInput.value.trim();
     const workDir = profDirInput.value.trim();
+
+    if (name.length > 256) {
+        name = name.slice(0, 256).trim();
+    }
 
     if (!name || !command) {
         showToast('Please specify name and command', 'error');

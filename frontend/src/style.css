@@ -100,6 +100,7 @@ body.resizing-sidebar {
   align-items: center;
   justify-content: center;
   transition: background-color 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
 }
 
 .toolbar-toggle-btn:hover {
@@ -259,23 +260,40 @@ body.resizing-sidebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   font-size: 0.85rem;
   background: transparent;
   color: var(--text-muted);
   border: 1px solid transparent;
   transition: all 0.15s ease;
+  overflow: hidden;
+}
+
+.session-list li > span,
+.profile-list li > span,
+.item-list li > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-list li .icon-btn-small,
 .profile-list li .icon-btn-small {
   padding: 2px 4px;
   font-size: 0.78rem;
+  flex-shrink: 0;
 }
 
 .item-actions {
   display: flex;
   align-items: center;
   gap: 3px;
+  flex-shrink: 0;
 }
 
 .session-list li:hover,
@@ -317,18 +335,30 @@ body.resizing-sidebar {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  gap: 16px;
 }
 
 .top-bar-left {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .session-info {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.session-info .icon-btn-small {
+  flex-shrink: 0;
 }
 
 .session-title {
@@ -342,6 +372,12 @@ body.resizing-sidebar {
   transition: border-color 0.15s ease, background-color 0.15s ease;
   white-space: nowrap;
   user-select: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 1 auto;
+  box-sizing: border-box;
 }
 
 .session-title[contenteditable="true"] {
@@ -350,6 +386,31 @@ body.resizing-sidebar {
   color: var(--text-bright);
   cursor: text;
   box-shadow: 0 0 0 2px rgba(77, 120, 204, 0.25);
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-overflow: clip;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  padding-bottom: 2px;
+}
+
+.session-title[contenteditable="true"]::-webkit-scrollbar {
+  height: 3px;
+}
+
+.session-title[contenteditable="true"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-title[contenteditable="true"]::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+}
+
+.session-title[contenteditable="true"]::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
 }
 
 .session-title:hover {
@@ -371,6 +432,7 @@ body.resizing-sidebar {
 .toolbar-actions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .terminal-workspace {
@@ -919,6 +981,10 @@ body.ctrl-pressed .pane-element:hover .pane-close-btn {
   border-radius: 4px;
   font-size: 0.75rem;
   cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tag-btn:hover { border-color: var(--primary); color: var(--text-bright); }
 

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -50,8 +49,8 @@ type Pane struct {
 	Cols        int                      `json:"cols"`
 	Rows        int                      `json:"rows"`
 	PTY         *conpty.ConPTY           `json:"-"`
-	Buffer      *RingBuffer              `json:"-"`
-	Clients     map[*websocket.Conn]bool `json:"-"`
+	Buffer      *RingBuffer                     `json:"-"`
+	Clients     map[*websocket.Conn]chan []byte `json:"-"`
 	resizeTimer *time.Timer
 	// onExit is invoked when the read loop ends. keepProcessAlive is true when
 	// the ConPTY output pipe closed (EOF) while the root process was still
@@ -228,7 +227,7 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 		Rows:      rows,
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
-		Clients:   make(map[*websocket.Conn]bool),
+		Clients:   make(map[*websocket.Conn]chan []byte),
 		onExit: func(sID, pID string, keepProcessAlive bool) {
 			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 		},
@@ -283,7 +282,7 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 			Rows:      rows,
 			PTY:       ptyInst,
 			Buffer:    NewRingBuffer(512 * 1024),
-			Clients:   make(map[*websocket.Conn]bool),
+			Clients:   make(map[*websocket.Conn]chan []byte),
 			onExit: func(sID, pID string, keepProcessAlive bool) {
 				_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 			},
@@ -383,7 +382,7 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 		Rows:      rows,
 		PTY:       ptyInst,
 		Buffer:    NewRingBuffer(512 * 1024),
-		Clients:   make(map[*websocket.Conn]bool),
+		Clients:   make(map[*websocket.Conn]chan []byte),
 		onExit: func(sID, pID string, keepProcessAlive bool) {
 			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 		},
@@ -436,7 +435,7 @@ const stillActiveExitCode = 259
 
 func (p *Pane) readLoop() {
 	log.Printf("[conpty server] Starting read loop for pane %s (PID: %d)", p.ID, p.PTY.Pid)
-	buf := make([]byte, 32768) // 32KB buffer for fast ANSI sequence draining
+	buf := make([]byte, 65536) // 64KB buffer for fast ANSI sequence draining
 	stillActive := false
 	for {
 		n, err := p.PTY.OutPipe.Read(buf)
@@ -447,20 +446,16 @@ func (p *Pane) readLoop() {
 			// 1. Instantly write to RingBuffer
 			p.Buffer.Write(chunk)
 
-			// 2. Snapshot active clients quickly under lock & release lock immediately
+			// 2. Non-blocking broadcast to all active client channels
 			p.mu.Lock()
-			clients := make([]*websocket.Conn, 0, len(p.Clients))
-			for conn := range p.Clients {
-				clients = append(clients, conn)
+			for _, ch := range p.Clients {
+				select {
+				case ch <- chunk:
+				default:
+					// Channel is full: client writer will catch up and batch
+				}
 			}
 			p.mu.Unlock()
-
-			// 3. Thread-safe broadcast OUTSIDE lock using coder/websocket
-			for _, conn := range clients {
-				writeCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-				_ = conn.Write(writeCtx, websocket.MessageText, chunk)
-				cancel()
-			}
 		}
 		if err != nil {
 			exitCode, exitErr := p.PTY.ExitCode()
@@ -553,10 +548,11 @@ func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill 
 	}
 
 	pane.mu.Lock()
-	for conn := range pane.Clients {
+	for conn, ch := range pane.Clients {
+		close(ch)
 		_ = conn.Close(websocket.StatusNormalClosure, "pane closed")
 	}
-	pane.Clients = make(map[*websocket.Conn]bool)
+	pane.Clients = make(map[*websocket.Conn]chan []byte)
 	pane.mu.Unlock()
 
 	delete(sess.Panes, paneID)
@@ -600,10 +596,11 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 			pane.PTY.Close()
 		}
 		pane.mu.Lock()
-		for conn := range pane.Clients {
+		for conn, ch := range pane.Clients {
+			close(ch)
 			_ = conn.Close(websocket.StatusNormalClosure, "session closed")
 		}
-		pane.Clients = make(map[*websocket.Conn]bool)
+		pane.Clients = make(map[*websocket.Conn]chan []byte)
 		pane.mu.Unlock()
 		delete(sm.panes, paneID)
 	}

@@ -1125,6 +1125,9 @@ function initXtermPane(containerEl, paneData) {
         ws.onopen = () => {
             console.log(`WebSocket connected to pane ${paneData.id} at ${wsUrl}`);
             if (isReconnecting) {
+                try {
+                    term.reset();
+                } catch (e) {}
                 showToast('Terminal connection restored', 'success');
                 isReconnecting = false;
             }
@@ -1138,21 +1141,17 @@ function initXtermPane(containerEl, paneData) {
             }, 200);
         };
 
-        ws.onmessage = async (event) => {
-            let text = '';
+        ws.binaryType = 'arraybuffer';
+
+        ws.onmessage = (event) => {
             if (typeof event.data === 'string') {
-                text = event.data;
+                term.write(event.data);
+            } else if (event.data instanceof ArrayBuffer) {
+                term.write(new Uint8Array(event.data));
             } else if (event.data instanceof Blob) {
-                text = await event.data.text();
-            }
-            if (text) {
-                isWritingServerOutput = true;
-                try {
-                    term.write(text);
-                } finally {
-                    // Reset flag synchronously after write & microtask queue
-                    isWritingServerOutput = false;
-                }
+                event.data.text().then(text => {
+                    if (text) term.write(text);
+                });
             }
         };
 
@@ -1200,15 +1199,12 @@ function initXtermPane(containerEl, paneData) {
     const ws = connectPaneWS();
 
     term.onData((data) => {
-        // Suppress automatic terminal query responses triggered while parsing server output / history
-        if (isWritingServerOutput) {
-            return;
-        }
-
-        // Filter out ANSI DA (Device Attributes) reports (e.g., \x1b[?1;2c, \x1b[>0;...c, \x1b[1;2c)
-        // that could leak into the Windows console shell prompt as '1;2c'
-        if (typeof data === 'string' && /^\x1b\[(\?|>|=)?[0-9;]*c$/.test(data)) {
-            return;
+        // Filter out ANSI DA (Device Attributes) and CPR (Cursor Position Report) automatic responses
+        // that xterm emits during heavy ANSI rendering (e.g., \x1b[?1;2c, \x1b[1;2c, \x1b[<row>;<col>R)
+        if (typeof data === 'string') {
+            if (/^\x1b\[(\?|>|=)?[0-9;]*c$/.test(data) || /^\x1b\[[0-9]+;[0-9]+R$/.test(data)) {
+                return;
+            }
         }
 
         const paneEntry = activePanesMap.get(paneData.id);

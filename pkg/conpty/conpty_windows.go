@@ -209,16 +209,17 @@ func New(command string, args []string, dir string, env []string, cols, rows int
 		rows = 24
 	}
 
-	// 1. Create Input and Output Pipes for ConPTY
+	// 1. Create Input and Output Pipes for ConPTY (1MB buffer to absorb high-speed bursts)
 	// inPipe: Host writes to inPipeWrite -> ConPTY reads from inPipeRead
 	// outPipe: ConPTY writes to outPipeWrite -> Host reads from outPipeRead
 	var inPipeRead, inPipeWrite windows.Handle
 	var outPipeRead, outPipeWrite windows.Handle
+	const pipeBufferSize = 1024 * 1024
 
-	if err := windows.CreatePipe(&inPipeRead, &inPipeWrite, nil, 0); err != nil {
+	if err := windows.CreatePipe(&inPipeRead, &inPipeWrite, nil, pipeBufferSize); err != nil {
 		return nil, fmt.Errorf("CreatePipe (in) failed: %w", err)
 	}
-	if err := windows.CreatePipe(&outPipeRead, &outPipeWrite, nil, 0); err != nil {
+	if err := windows.CreatePipe(&outPipeRead, &outPipeWrite, nil, pipeBufferSize); err != nil {
 		windows.CloseHandle(inPipeRead)
 		windows.CloseHandle(inPipeWrite)
 		return nil, fmt.Errorf("CreatePipe (out) failed: %w", err)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -51,7 +52,7 @@ func safeWriteWS(conn *websocket.Conn, data []byte) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return conn.Write(ctx, websocket.MessageText, data)
 }
@@ -444,7 +445,7 @@ type WSIncomingMsg struct {
 }
 
 func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
-	paneID := r.URL.Path[len("/ws/pane/"):]
+	paneID := strings.TrimPrefix(r.URL.Path, "/ws/pane/")
 	pane, ok := s.sessionMgr.GetPane(paneID)
 	if !ok {
 		log.Printf("[ws 404] Pane not found: %s", paneID)
@@ -459,23 +460,65 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WS Accept error for pane %s: %v", paneID, err)
 		return
 	}
+	conn.SetReadLimit(16 * 1024 * 1024) // 16MB limit for terminal paste/inputs
 	defer removeWSConn(conn)
 
-	pane.mu.Lock()
-	pane.Clients[conn] = true
-	pane.mu.Unlock()
-
-	defer func() {
-		pane.mu.Lock()
-		delete(pane.Clients, conn)
-		pane.mu.Unlock()
-	}()
-
-	// Send history buffer on attach!
+	// Send history buffer on attach before registering live channel
 	history := pane.Buffer.Bytes()
 	if len(history) > 0 {
 		_ = safeWriteWS(conn, history)
 	}
+
+	sendCh := make(chan []byte, 512)
+	pane.mu.Lock()
+	pane.Clients[conn] = sendCh
+	pane.mu.Unlock()
+
+	defer func() {
+		pane.mu.Lock()
+		if ch, ok := pane.Clients[conn]; ok {
+			delete(pane.Clients, conn)
+			close(ch)
+		}
+		pane.mu.Unlock()
+	}()
+
+	// Dedicated non-blocking writer pump: coalesces queued chunks into unified frames
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-sendCh:
+				if !ok {
+					return
+				}
+				var buf bytes.Buffer
+				buf.Write(chunk)
+
+			drainLoop:
+				for buf.Len() < 64*1024 {
+					select {
+					case extra, ok := <-sendCh:
+						if !ok {
+							break drainLoop
+						}
+						buf.Write(extra)
+					default:
+						break drainLoop
+					}
+				}
+
+				if err := safeWriteWS(conn, buf.Bytes()); err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 
 	// Incoming message loop (Inputs & Resizes)
 	for {
@@ -518,6 +561,7 @@ func (s *Server) handleWSEvents(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WS Event Accept error: %v", err)
 		return
 	}
+	conn.SetReadLimit(16 * 1024 * 1024)
 	defer removeWSConn(conn)
 
 	s.eventMu.Lock()

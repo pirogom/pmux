@@ -104,9 +104,10 @@ wails build
 
 ## 📖 사용 가이드
 
-### 1. 터미널 분할 (Splitting Terminals)
+### 1. 터미널 분할 및 닫기 (Splitting & Closing Terminals)
 - 상단 워크스페이스 툴바의 **Split Horizontal** (`Ctrl+Shift+D`) 또는 **Split Vertical** (`Ctrl+Shift+E`) 버튼을 클릭하여 현재 포커스된 Pane을 분할합니다.
 - 스플리터 구분선을 마우스로 드래그하여 분할 비율을 자유롭게 조절할 수 있습니다.
+- **Pane 닫기**: `Ctrl` 키를 누르면 각 Pane의 상단 오른쪽 모서리에 **✖ (닫기)** 버튼이 표시되며, 이 ✖ 버튼을 클릭하여 해당 Pane을 닫을 수 있습니다.
 
 ### 2. 프로필 관리 (Profile Management)
 - 좌측 사이드바의 **➕ Add Profile** 버튼을 눌러 자주 사용하는 환경 프로필(명령어, 인자, 작업 디렉터리)을 등록합니다.

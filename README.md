@@ -104,9 +104,10 @@ The compiled executable will be located in the `build/bin/` directory.
 
 ## 📖 Usage Guide
 
-### 1. Splitting Terminals
+### 1. Splitting & Closing Terminals
 - Click the **Split Horizontal** (`Ctrl+Shift+D`) or **Split Vertical** (`Ctrl+Shift+E`) buttons on the top workspace action bar to split the currently focused pane.
 - Drag the splitter dividers to adjust pane proportions dynamically.
+- **Closing Panes**: Press and hold the `Ctrl` key to reveal the **✖ (Close)** button at the top-right corner of each pane, then click the ✖ button to close that pane.
 
 ### 2. Profile Management
 - Click **➕ Add Profile** in the left sidebar to save reusable environment profiles (Command, Arguments, Working Directory).

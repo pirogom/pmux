@@ -197,6 +197,7 @@ type ConPTY struct {
 	OutPipe    io.ReadCloser
 	ProcHandle windows.Handle
 	Pid        int
+	resizeMu   sync.Mutex
 }
 
 func New(command string, args []string, dir string, env []string, cols, rows int) (*ConPTY, error) {
@@ -365,6 +366,13 @@ func (c *ConPTY) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
 		return nil
 	}
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+
+	return c.resizeLocked(cols, rows)
+}
+
+func (c *ConPTY) resizeLocked(cols, rows int) error {
 	coordVal := uintptr(uint32(cols&0xFFFF) | (uint32(rows&0xFFFF) << 16))
 	r1, _, err := procResizePseudoConsole.Call(
 		uintptr(c.hPC),
@@ -381,13 +389,16 @@ func (c *ConPTY) ForceRedraw(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
 		return nil
 	}
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+
 	jitterCols := cols + 1
 	if jitterCols > 300 {
 		jitterCols = cols - 1
 	}
-	_ = c.Resize(jitterCols, rows)
+	_ = c.resizeLocked(jitterCols, rows)
 	time.Sleep(15 * time.Millisecond)
-	return c.Resize(cols, rows)
+	return c.resizeLocked(cols, rows)
 }
 
 func (c *ConPTY) Close() error {

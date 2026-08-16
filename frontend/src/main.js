@@ -903,10 +903,10 @@ async function attachToSession(sessionId) {
         setActivePane(sess.activePaneId, false);
     }
     
-    // Immediate and staged reflow passes to guarantee layout calculation, screen repaint, and ConPTY redraw sync
-    reflowAllPanes(true, true);
-    setTimeout(() => reflowAllPanes(true, true), 60);
-    setTimeout(() => reflowAllPanes(true, false), 150);
+    // Coordinated reflow pass to calculate layout and synchronize ConPTY geometry
+    requestAnimationFrame(() => {
+        reflowAllPanes(true, false);
+    });
 }
 
 function renderLayoutTree(node, sess, isRoot = true) {
@@ -1176,17 +1176,11 @@ function initXtermPane(containerEl, paneData) {
         // Re-attach existing term element
         const existing = activePanesMap.get(paneData.id);
         containerEl.appendChild(existing.element);
-        setTimeout(() => {
-            try {
-                existing.fitAddon.fit();
-                if (existing.term) {
-                    existing.term.refresh(0, existing.term.rows - 1);
-                }
-                if (existing.ws && existing.ws.readyState === WebSocket.OPEN && existing.term && existing.term.cols >= 10 && existing.term.rows >= 3) {
-                    existing.ws.send(JSON.stringify({ type: 'redraw', cols: existing.term.cols, rows: existing.term.rows }));
-                }
-            } catch(e) {}
-        }, 30);
+        try {
+            if (existing.term) {
+                existing.term.refresh(0, existing.term.rows - 1);
+            }
+        } catch(e) {}
         return;
     }
 

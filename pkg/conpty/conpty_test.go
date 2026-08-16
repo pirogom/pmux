@@ -58,3 +58,29 @@ func TestConPTYInputExecution(t *testing.T) {
 	}
 }
 
+func TestConPTYConcurrentResizeAndForceRedraw(t *testing.T) {
+	cmdPath := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	ptyInst, err := New(cmdPath, []string{}, "", nil, 80, 24)
+	if err != nil {
+		t.Fatalf("Failed to create ConPTY: %v", err)
+	}
+	defer ptyInst.Close()
+
+	// Launch multiple concurrent goroutines rapidly invoking Resize and ForceRedraw
+	done := make(chan bool, 20)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			_ = ptyInst.Resize(80+idx, 24+idx%5)
+			done <- true
+		}(i)
+		go func(idx int) {
+			_ = ptyInst.ForceRedraw(80+idx, 24+idx%5)
+			done <- true
+		}(i)
+	}
+
+	for i := 0; i < 20; i++ {
+		<-done
+	}
+}
+

@@ -200,19 +200,27 @@ func (p *Pane) TriggerForceRedraw(cols, rows int) {
 	}
 
 	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.Cols = cols
 	p.Rows = rows
 	if p.resizeTimer != nil {
 		p.resizeTimer.Stop()
 	}
-	ptyInst := p.PTY
-	p.mu.Unlock()
 
-	if ptyInst != nil {
-		go func(inst *conpty.ConPTY, targetCols, targetRows int) {
-			_ = inst.ForceRedraw(targetCols, targetRows)
-		}(ptyInst, cols, rows)
-	}
+	p.resizeTimer = time.AfterFunc(35*time.Millisecond, func() {
+		p.mu.Lock()
+		c := p.Cols
+		r := p.Rows
+		ptyInst := p.PTY
+		p.mu.Unlock()
+
+		if ptyInst != nil && c >= 10 && r >= 3 {
+			go func(inst *conpty.ConPTY, targetCols, targetRows int) {
+				_ = inst.ForceRedraw(targetCols, targetRows)
+			}(ptyInst, c, r)
+		}
+	})
 }
 
 type Session struct {

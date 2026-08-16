@@ -625,9 +625,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(msg, &wsMsg); err == nil {
 				switch wsMsg.Type {
 				case "input":
-					if pane.PTY != nil && pane.PTY.InPipe != nil {
-						_, _ = pane.PTY.InPipe.Write([]byte(wsMsg.Data))
-					}
+					pane.WriteInput([]byte(wsMsg.Data))
 				case "resize":
 					if pane.PTY != nil && wsMsg.Cols > 0 && wsMsg.Rows > 0 {
 						pane.TriggerResize(wsMsg.Cols, wsMsg.Rows)
@@ -639,9 +637,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 				}
 			} else {
 				// Raw string input fallback
-				if pane.PTY != nil && pane.PTY.InPipe != nil {
-					_, _ = pane.PTY.InPipe.Write(msg)
-				}
+				pane.WriteInput(msg)
 			}
 		}
 	}

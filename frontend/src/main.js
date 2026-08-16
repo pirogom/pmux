@@ -1313,11 +1313,28 @@ function initXtermPane(containerEl, paneData) {
 
     const ws = connectPaneWS();
 
-    term.onData((data) => {
+    let inputBatchBuf = '';
+    let inputBatchTimer = null;
+
+    const flushInputBatch = () => {
+        if (!inputBatchBuf) return;
+        const toSend = inputBatchBuf;
+        inputBatchBuf = '';
+        if (inputBatchTimer) {
+            clearTimeout(inputBatchTimer);
+            inputBatchTimer = null;
+        }
         const paneEntry = activePanesMap.get(paneData.id);
         const currentWS = paneEntry ? paneEntry.ws : ws;
         if (currentWS && currentWS.readyState === WebSocket.OPEN) {
-            currentWS.send(JSON.stringify({ type: 'input', data: data }));
+            currentWS.send(JSON.stringify({ type: 'input', data: toSend }));
+        }
+    };
+
+    term.onData((data) => {
+        inputBatchBuf += data;
+        if (!inputBatchTimer) {
+            inputBatchTimer = setTimeout(flushInputBatch, 4);
         }
     });
 
@@ -1348,6 +1365,7 @@ function initXtermPane(containerEl, paneData) {
             // Alt + V: Send literal ^V (\x16, Literal Next / Visual Block) to terminal backend
             if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyV') {
                 event.preventDefault();
+                flushInputBatch();
                 const paneEntry = activePanesMap.get(paneData.id);
                 const currentWS = paneEntry ? paneEntry.ws : ws;
                 if (currentWS && currentWS.readyState === WebSocket.OPEN) {

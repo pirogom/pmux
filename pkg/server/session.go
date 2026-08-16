@@ -70,17 +70,20 @@ type LayoutNode struct {
 }
 
 type Pane struct {
-	ID          string                   `json:"id"`
-	SessionID   string                   `json:"sessionId"`
-	WorkDir     string                   `json:"workDir"`
-	Command     string                   `json:"command"`
-	Args        []string                 `json:"args"`
-	Cols        int                      `json:"cols"`
-	Rows        int                      `json:"rows"`
-	PTY         *conpty.ConPTY           `json:"-"`
+	ID          string                          `json:"id"`
+	SessionID   string                          `json:"sessionId"`
+	WorkDir     string                          `json:"workDir"`
+	Command     string                          `json:"command"`
+	Args        []string                        `json:"args"`
+	Cols        int                             `json:"cols"`
+	Rows        int                             `json:"rows"`
+	PTY         *conpty.ConPTY                  `json:"-"`
 	Buffer      *RingBuffer                     `json:"-"`
 	Clients     map[*websocket.Conn]chan []byte `json:"-"`
 	resizeTimer *time.Timer
+	inCh        chan []byte
+	inDone      chan struct{}
+	inOnce      sync.Once
 	// onExit is invoked when the read loop ends. keepProcessAlive is true when
 	// the ConPTY output pipe closed (EOF) while the root process was still
 	// STILL_ACTIVE — an anomaly (observed with MSYS2 -defterm shells) rather
@@ -88,6 +91,72 @@ type Pane struct {
 	// force-killed.
 	onExit func(sessionID, paneID string, keepProcessAlive bool)
 	mu     sync.Mutex
+}
+
+func newPane(paneID, sessionID, workDir, command string, args []string, cols, rows int, ptyInst *conpty.ConPTY, onExit func(sID, pID string, keepProcessAlive bool)) *Pane {
+	p := &Pane{
+		ID:        paneID,
+		SessionID: sessionID,
+		WorkDir:   workDir,
+		Command:   command,
+		Args:      args,
+		Cols:      cols,
+		Rows:      rows,
+		PTY:       ptyInst,
+		Buffer:    NewRingBuffer(512 * 1024),
+		Clients:   make(map[*websocket.Conn]chan []byte),
+		inCh:      make(chan []byte, 1024),
+		inDone:    make(chan struct{}),
+		onExit:    onExit,
+	}
+	go p.inputLoop()
+	return p
+}
+
+func (p *Pane) WriteInput(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	chunk := make([]byte, len(data))
+	copy(chunk, data)
+
+	select {
+	case <-p.inDone:
+		return
+	case p.inCh <- chunk:
+	default:
+		go func(c []byte) {
+			select {
+			case <-p.inDone:
+			case p.inCh <- c:
+			}
+		}(chunk)
+	}
+}
+
+func (p *Pane) inputLoop() {
+	for {
+		select {
+		case <-p.inDone:
+			return
+		case data, ok := <-p.inCh:
+			if !ok {
+				return
+			}
+			p.mu.Lock()
+			ptyInst := p.PTY
+			p.mu.Unlock()
+			if ptyInst != nil && ptyInst.InPipe != nil {
+				_, _ = ptyInst.InPipe.Write(data)
+			}
+		}
+	}
+}
+
+func (p *Pane) CloseInput() {
+	p.inOnce.Do(func() {
+		close(p.inDone)
+	})
 }
 
 func (p *Pane) TriggerResize(cols, rows int) {
@@ -246,21 +315,9 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 		return nil, nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
 
-	pane := &Pane{
-		ID:        paneID,
-		SessionID: sessionID,
-		WorkDir:   workDir,
-		Command:   command,
-		Args:      args,
-		Cols:      cols,
-		Rows:      rows,
-		PTY:       ptyInst,
-		Buffer:    NewRingBuffer(512 * 1024),
-		Clients:   make(map[*websocket.Conn]chan []byte),
-		onExit: func(sID, pID string, keepProcessAlive bool) {
-			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
-		},
-	}
+	pane := newPane(paneID, sessionID, workDir, command, args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
+		_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
+	})
 
 	sess := &Session{
 		ID:           sessionID,
@@ -301,21 +358,9 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 			return nil, nil, err
 		}
 
-		pane := &Pane{
-			ID:        paneID,
-			SessionID: sessionID,
-			WorkDir:   node.WorkDir,
-			Command:   cmd,
-			Args:      node.Args,
-			Cols:      cols,
-			Rows:      rows,
-			PTY:       ptyInst,
-			Buffer:    NewRingBuffer(512 * 1024),
-			Clients:   make(map[*websocket.Conn]chan []byte),
-			onExit: func(sID, pID string, keepProcessAlive bool) {
-				_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
-			},
-		}
+		pane := newPane(paneID, sessionID, node.WorkDir, cmd, node.Args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
+			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
+		})
 
 		sess.Panes[paneID] = pane
 		sm.panes[paneID] = pane
@@ -401,21 +446,9 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 		return nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
 
-	newPane := &Pane{
-		ID:        paneID,
-		SessionID: sessionID,
-		WorkDir:   workDir,
-		Command:   command,
-		Args:      args,
-		Cols:      cols,
-		Rows:      rows,
-		PTY:       ptyInst,
-		Buffer:    NewRingBuffer(512 * 1024),
-		Clients:   make(map[*websocket.Conn]chan []byte),
-		onExit: func(sID, pID string, keepProcessAlive bool) {
-			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
-		},
-	}
+	newPane := newPane(paneID, sessionID, workDir, command, args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
+		_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
+	})
 
 	sess.Panes[paneID] = newPane
 	sess.ActivePaneID = paneID
@@ -565,6 +598,8 @@ func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill 
 		return nil
 	}
 
+	pane.CloseInput()
+
 	if pane.PTY != nil {
 		if forceKill {
 			pane.PTY.Close()
@@ -621,6 +656,7 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 	}
 
 	for paneID, pane := range sess.Panes {
+		pane.CloseInput()
 		if pane.PTY != nil {
 			pane.PTY.Close()
 		}

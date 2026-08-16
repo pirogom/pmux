@@ -37,3 +37,18 @@ func TestRemoveLayoutNode(t *testing.T) {
 		t.Errorf("Expected remaining layout ID to be %s, got %s", p1.ID, sess.Layout.ID)
 	}
 }
+
+func TestPane_AsyncInputPipeline(t *testing.T) {
+	sm := NewSessionManager()
+	sess, pane, err := sm.CreateSession("prof_input_test", "InputTestSession", "cmd.exe", nil, "", 80, 24)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	defer sm.CloseSession(sess.ID)
+
+	// Simulate rapid burst of 2000 keystrokes / long paste chunks
+	for i := 0; i < 2000; i++ {
+		pane.WriteInput([]byte("a"))
+	}
+	pane.WriteInput([]byte("\r\n"))
+}

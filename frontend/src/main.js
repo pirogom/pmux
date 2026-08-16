@@ -336,14 +336,12 @@ function setupEventListeners() {
 
     // Automatically sync and refresh terminal panes when window gains focus or becomes visible
     window.addEventListener('focus', () => {
-        reflowAllPanes(true, false);
-        setTimeout(() => reflowAllPanes(true, false), 80);
+        setTimeout(() => reflowAllPanes(true, false), 60);
     });
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            reflowAllPanes(true, false);
-            setTimeout(() => reflowAllPanes(true, false), 80);
+            setTimeout(() => reflowAllPanes(true, false), 100);
         }
     });
 
@@ -1196,7 +1194,9 @@ function initXtermPane(containerEl, paneData) {
             foreground: '#abb2bf',
             cursor: '#528bff'
         },
-        cursorBlink: true
+        cursorBlink: true,
+        alternateScroll: true,
+        allowProposedApi: true
     });
 
     const fitAddon = new FitAddon();
@@ -1205,6 +1205,9 @@ function initXtermPane(containerEl, paneData) {
 
     try {
         const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => {
+            webglAddon.dispose();
+        });
         term.loadAddon(webglAddon);
     } catch (e) {
         // WebGL fallback to DOM renderer
@@ -1234,9 +1237,6 @@ function initXtermPane(containerEl, paneData) {
         ws.onopen = () => {
             console.log(`WebSocket connected to pane ${paneData.id} at ${wsUrl}`);
             if (isReconnecting) {
-                try {
-                    term.reset();
-                } catch (e) {}
                 showToast('Terminal connection restored', 'success');
                 isReconnecting = false;
             }

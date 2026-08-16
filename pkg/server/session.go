@@ -84,6 +84,7 @@ type Pane struct {
 	inCh        chan []byte
 	inDone      chan struct{}
 	inOnce      sync.Once
+	modeTracker *VTModeTracker
 	// onExit is invoked when the read loop ends. keepProcessAlive is true when
 	// the ConPTY output pipe closed (EOF) while the root process was still
 	// STILL_ACTIVE — an anomaly (observed with MSYS2 -defterm shells) rather
@@ -95,22 +96,32 @@ type Pane struct {
 
 func newPane(paneID, sessionID, workDir, command string, args []string, cols, rows int, ptyInst *conpty.ConPTY, onExit func(sID, pID string, keepProcessAlive bool)) *Pane {
 	p := &Pane{
-		ID:        paneID,
-		SessionID: sessionID,
-		WorkDir:   workDir,
-		Command:   command,
-		Args:      args,
-		Cols:      cols,
-		Rows:      rows,
-		PTY:       ptyInst,
-		Buffer:    NewRingBuffer(512 * 1024),
-		Clients:   make(map[*websocket.Conn]chan []byte),
-		inCh:      make(chan []byte, 1024),
-		inDone:    make(chan struct{}),
-		onExit:    onExit,
+		ID:          paneID,
+		SessionID:   sessionID,
+		WorkDir:     workDir,
+		Command:     command,
+		Args:        args,
+		Cols:        cols,
+		Rows:        rows,
+		PTY:         ptyInst,
+		Buffer:      NewRingBuffer(512 * 1024),
+		Clients:     make(map[*websocket.Conn]chan []byte),
+		inCh:        make(chan []byte, 1024),
+		inDone:      make(chan struct{}),
+		modeTracker: NewVTModeTracker(),
+		onExit:      onExit,
 	}
 	go p.inputLoop()
 	return p
+}
+
+func (p *Pane) GetModePreamble() []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.modeTracker == nil {
+		return nil
+	}
+	return p.modeTracker.ActivePreamble()
 }
 
 func (p *Pane) WriteInput(data []byte) {
@@ -516,8 +527,13 @@ func (p *Pane) readLoop() {
 			// 1. Instantly write to RingBuffer
 			p.Buffer.Write(chunk)
 
-			// 2. Non-blocking broadcast to all active client channels
 			p.mu.Lock()
+			// 2. Track active DECSET/DECRST terminal modes
+			if p.modeTracker != nil {
+				p.modeTracker.Process(chunk)
+			}
+
+			// 3. Non-blocking broadcast to all active client channels
 			for _, ch := range p.Clients {
 				select {
 				case ch <- chunk:

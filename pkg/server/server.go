@@ -557,6 +557,12 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(16 * 1024 * 1024) // 16MB limit for terminal paste/inputs
 	defer removeWSConn(conn)
 
+	// Send active VT mode preamble (e.g. Alternate Buffer, SGR Mouse, Bracketed Paste) before history
+	preamble := pane.GetModePreamble()
+	if len(preamble) > 0 {
+		_ = safeWriteWS(conn, preamble)
+	}
+
 	// Send history buffer on attach before registering live channel
 	history := pane.Buffer.Bytes()
 	if len(history) > 0 {

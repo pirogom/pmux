@@ -2,6 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import sshWhiteIcon from './assets/images/ssh-white.svg';
 
 // State Management
 let serverPort = 4799;
@@ -512,6 +513,7 @@ function setupEventListeners() {
                 const filePath = await window.go.main.App.SelectFile();
                 if (filePath) {
                     sshClientPathInput.value = filePath;
+                    await saveSSHClientPath();
                 }
             }
         } catch (e) {
@@ -519,7 +521,11 @@ function setupEventListeners() {
         }
     });
     addClick('btn-add-ssh-address', () => openSSHAddressModal(null));
-    addClick('btn-save-ssh-config', saveSSHConfigFromModal);
+    if (sshClientPathInput) {
+        sshClientPathInput.addEventListener('change', async () => {
+            await saveSSHClientPath();
+        });
+    }
     addClick('btn-export-ssh', () => {
         openSSHPasswordModal('export', 'Export SSH Addresses', 'Enter a password to encrypt the export file.')
             .then(pwd => doExportSSH(pwd))
@@ -935,7 +941,7 @@ function renderLayoutTree(node, sess, isRoot = true) {
         sshToolbarBtn.className = 'pane-toolbar-btn';
         sshToolbarBtn.title = 'SSH Manager (Ctrl + Click)';
         const sshToolbarImg = document.createElement('img');
-        sshToolbarImg.src = './src/assets/images/ssh-white.svg';
+        sshToolbarImg.src = sshWhiteIcon;
         sshToolbarImg.alt = 'SSH';
         sshToolbarBtn.appendChild(sshToolbarImg);
         sshToolbarBtn.addEventListener('click', (e) => {
@@ -1689,11 +1695,50 @@ async function saveProfileFromModal() {
 
 const DEFAULT_SSH_CLIENT_PATH = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
 
+// Load the (global) ssh config. Wails binding first, daemon HTTP API as fallback.
+async function loadSSHConfig() {
+    if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSSHConfig) {
+        return await window.go.main.App.GetSSHConfig();
+    }
+    try {
+        return await apiGet('/api/ssh/config');
+    } catch (e) {
+        return null;
+    }
+}
+
+// Persist the (global) ssh config. Returns true on success.
+async function persistSSHConfig() {
+    if (!sshConfig) return false;
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveSSHConfig) {
+            await window.go.main.App.SaveSSHConfig(sshConfig);
+        } else {
+            await apiPost('/api/ssh/config', sshConfig);
+        }
+        return true;
+    } catch (e) {
+        showToast('Failed to save SSH config: ' + (e.message || e), 'error');
+        return false;
+    }
+}
+
+// Save the ssh client path from the manager input immediately.
+async function saveSSHClientPath() {
+    if (!sshConfig || !sshClientPathInput) return;
+    sshConfig.clientPath = sshClientPathInput.value.trim() || DEFAULT_SSH_CLIENT_PATH;
+    const saved = await persistSSHConfig();
+    if (saved) {
+        showToast('SSH client path saved', 'success');
+    }
+}
+
 async function openSSHManager(sessionId, paneId) {
     sshPaneId = paneId;
     try {
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSSHConfig) {
-            sshConfig = await window.go.main.App.GetSSHConfig();
+        const loaded = await loadSSHConfig();
+        if (loaded) {
+            sshConfig = loaded;
         } else {
             sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
         }
@@ -1771,7 +1816,8 @@ function renderSSHAddressList() {
             if (!confirmed) return;
             sshConfig.addresses = sshConfig.addresses.filter(a => a.id !== addr.id);
             renderSSHAddressList();
-            showToast('Address deleted (click Save to persist)', 'info');
+            await persistSSHConfig();
+            showToast('Address deleted', 'info');
         });
 
         actions.appendChild(connectBtn);
@@ -1801,7 +1847,7 @@ function closeSSHAddressModal() {
     sshAddressModalEl.classList.add('hidden');
 }
 
-function saveSSHAddressFromModal() {
+async function saveSSHAddressFromModal() {
     const name = sshAddrNameInput.value.trim();
     const host = sshAddrHostInput.value.trim();
     if (!name || !host) {
@@ -1831,22 +1877,8 @@ function saveSSHAddressFromModal() {
 
     renderSSHAddressList();
     closeSSHAddressModal();
-    showToast('Address saved (click Save to persist)', 'info');
-}
-
-async function saveSSHConfigFromModal() {
-    if (!sshConfig) return;
-    sshConfig.clientPath = sshClientPathInput.value.trim() || DEFAULT_SSH_CLIENT_PATH;
-    try {
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveSSHConfig) {
-            await window.go.main.App.SaveSSHConfig(sshConfig);
-        } else {
-            await apiPost('/api/ssh/config', sshConfig);
-        }
-        showToast('SSH config saved', 'success');
-    } catch (e) {
-        showToast('Failed to save SSH config: ' + (e.message || e), 'error');
-    }
+    const saved = await persistSSHConfig();
+    showToast(saved ? 'Address saved' : 'Address saved, but failed to persist', saved ? 'success' : 'error');
 }
 
 function sshConnect(addr) {
@@ -1927,13 +1959,50 @@ function confirmSSHPasswordModal() {
     }
 }
 
+function pickSSHExportFile() {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pmuxssh';
+        input.onchange = () => {
+            resolve((input.files && input.files[0]) || null);
+        };
+        input.click();
+    });
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+function downloadSSHExport(base64Data, filename) {
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
 async function doExportSSH(password) {
     if (!password) return;
     try {
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.ExportSSH) {
             await window.go.main.App.ExportSSH(password);
         } else {
-            await apiPost('/api/ssh/export', { password });
+            const res = await apiPost('/api/ssh/export', { password });
+            if (!res || !res.data) throw new Error('Export returned no data');
+            downloadSSHExport(res.data, 'pmux-ssh-export.pmuxssh');
         }
         showToast('SSH addresses exported', 'success');
     } catch (e) {
@@ -1947,9 +2016,13 @@ async function doImportSSH(password) {
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.ImportSSH) {
             await window.go.main.App.ImportSSH(password);
         } else {
-            await apiPost('/api/ssh/import', { password });
+            const file = await pickSSHExportFile();
+            if (!file) return;
+            const data = await fileToBase64(file);
+            await apiPost('/api/ssh/import', { password, data });
         }
-        sshConfig = await window.go.main.App.GetSSHConfig();
+        const loaded = await loadSSHConfig();
+        if (loaded) sshConfig = loaded;
         if (sshClientPathInput) {
             sshClientPathInput.value = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
         }

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"pmux/pkg/config"
 	"pmux/pkg/git"
+	"pmux/pkg/ssh"
 )
 
 type Server struct {
@@ -106,6 +108,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/git/status", s.handleGitStatus)
 	mux.HandleFunc("/api/git/push", s.handleGitPush)
 	mux.HandleFunc("/api/git/pull", s.handleGitPull)
+	mux.HandleFunc("/api/ssh/config", s.handleSSHConfig)
+	mux.HandleFunc("/api/ssh/export", s.handleSSHExport)
+	mux.HandleFunc("/api/ssh/import", s.handleSSHImport)
 	mux.HandleFunc("/api/config/git-poll-interval", s.handleSaveGitPollInterval)
 	mux.HandleFunc("/api/server/kill", s.handleKillServer)
 	mux.HandleFunc("/ws/pane/", s.handleWSPane)
@@ -421,6 +426,95 @@ func (s *Server) handleGitPull(w http.ResponseWriter, r *http.Request) {
 	}
 	res := git.Pull(req.WorkDir)
 	_ = json.NewEncoder(w).Encode(map[string]string{"output": res})
+}
+
+// handleSSHConfig loads (GET) or saves (POST) the global ssh config,
+// mirroring the App.GetSSHConfig / App.SaveSSHConfig Wails bindings so the
+// frontend can also work through the daemon HTTP API.
+func (s *Server) handleSSHConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodPost {
+		var cfg ssh.Config
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := ssh.Save(&cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+
+	cfg, err := ssh.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+// handleSSHExport encrypts the ssh config with the given password and returns
+// the export file bytes as base64 (the GUI process opens a save dialog and
+// writes the file in the Wails binding path).
+func (s *Server) handleSSHExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := ssh.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data, err := ssh.Export(cfg, req.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"data": base64.StdEncoding.EncodeToString(data)})
+}
+
+// handleSSHImport decrypts an uploaded export file (base64) with the given
+// password and replaces the current ssh config.
+func (s *Server) handleSSHImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		Data     string `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(req.Data)
+	if err != nil {
+		http.Error(w, "invalid export data", http.StatusBadRequest)
+		return
+	}
+	cfg, err := ssh.Import(data, req.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := ssh.Save(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (s *Server) handleKillServer(w http.ResponseWriter, r *http.Request) {

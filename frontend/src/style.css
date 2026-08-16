@@ -943,6 +943,13 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
 
 .modal.hidden { display: none; }
 
+/* Modals stacked on top of other modals (confirm / nested editor dialogs) */
+#confirm-modal,
+#ssh-address-modal,
+#ssh-pass-modal {
+  z-index: 200;
+}
+
 .modal-content {
   background: var(--bg-sidebar);
   border: 1px solid var(--border);

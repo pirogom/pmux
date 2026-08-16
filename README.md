@@ -44,6 +44,7 @@
 | `--stop`, `--kill` | Stop/terminate the running background daemon server | `false` |
 | `--server` | Run strictly in background daemon server mode (Headless) | `false` |
 | `--port <number>` | Specify the custom listen port for the daemon server | `4799` |
+| `--log` | Enable debug and status logging output to console | `false` |
 | `--help`, `-h` | Display command-line usage and help details | `false` |
 
 ### Command Examples
@@ -61,9 +62,28 @@ pmux.exe --stop
 # 4. Run strictly in background daemon server mode on a custom port
 pmux.exe --server --port 5000
 
-# 5. Display CLI help details
+# 5. Start daemon server with console logging enabled (for debugging)
+pmux.exe --server --log
+
+# 6. Display CLI help details
 pmux.exe --help
 ```
+
+---
+
+## 💡 Recommended SSH Client (Windows OpenSSH vs MSYS2 SSH)
+
+> [!WARNING]
+> **MSYS2 SSH Client Forced Exit on Ctrl+C Issue**
+>
+> The built-in `ssh` binary from MSYS2 / Cygwin environments (`/usr/bin/ssh`) has known signal handling conflicts between its POSIX PTY emulation layer and Windows ConPTY. When pressing **`Ctrl + C` (`^C`, SIGINT)** inside an active remote SSH session, the local `ssh` process itself receives the termination signal and gets **killed immediately**, abruptly closing the remote connection.
+
+### Recommended Solution: Use Native Windows OpenSSH
+For SSH connections, we strongly recommend using the **native Windows OpenSSH client**:
+
+- **Executable Path**: `C:\Windows\System32\OpenSSH\ssh.exe`
+- The native Windows `ssh.exe` is fully compatible with Windows ConPTY. Pressing `Ctrl + C` correctly interrupts the running remote foreground process without killing the local SSH client.
+- When creating a Profile, set the command to `C:\Windows\System32\OpenSSH\ssh.exe` or ensure `C:\Windows\System32\OpenSSH` has higher precedence than MSYS2 paths in your system's `PATH` environment variable.
 
 ---
 

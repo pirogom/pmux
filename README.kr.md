@@ -44,6 +44,7 @@
 | `--stop`, `--kill` | 구동 중인 백그라운드 데몬 서버 정지 | `false` |
 | `--server` | 백그라운드 데몬 서버 전용 모드로 실행 (Headless) | `false` |
 | `--port <number>` | 백그라운드 데몬 서버의 리슨 포트 지정 | `4799` |
+| `--log` | 콘솔로의 디버그/상태 로그 출력 활성화 | `false` |
 | `--help`, `-h` | 명령어 사용법 및 도움말 출력 | `false` |
 
 ### 실행 명령어 예시
@@ -61,9 +62,28 @@ pmux.exe --stop
 # 4. 사용자 정의 포트로 데몬 서버만 전용 백그라운드 실행
 pmux.exe --server --port 5000
 
-# 5. 커맨드라인 도움말 출력
+# 5. 데몬 서버 실행 시 콘솔 로그 출력 활성화 (디버깅용)
+pmux.exe --server --log
+
+# 6. 커맨드라인 도움말 출력
 pmux.exe --help
 ```
+
+---
+
+## 💡 SSH 클라이언트 권장 사항 (Windows OpenSSH vs MSYS2 SSH)
+
+> [!WARNING]
+> **MSYS2 내장 SSH 클라이언트의 Ctrl+C 프로세스 종료 문제**
+>
+> MSYS2 / Cygwin 계열에 내장된 `ssh` (`/usr/bin/ssh` 등)는 POSIX PTY 에뮬레이션 신호 처리 방식과 Windows ConPTY 간의 호환성 문제로 인해, SSH로 원격 서버에 접속한 상태에서 **`Ctrl + C` (`^C`, SIGINT)**를 입력하면 원격지의 실행 중인 명령뿐만 아니라 **로컬 `ssh` 프로세스 자체까지 즉시 kill(비정상 종료)**되어 세션이 끊어지는 현상이 발생합니다.
+
+### 권장 해결 방법: Windows 기본 OpenSSH 사용
+SSH 원격 접속 시에는 MSYS2 내장 `ssh` 대신 **Windows 기본 내장 OpenSSH 클라이언트**를 사용할 것을 강력히 권장합니다.
+
+- **실행 파일 경로**: `C:\Windows\System32\OpenSSH\ssh.exe`
+- Windows 기본 `ssh.exe`는 Windows ConPTY API와 완벽하게 호환되어, 원격 서버에서 `Ctrl + C`를 누르더라도 SSH 세션 연결이 유지되고 원격 프로세스만 정상적으로 인터럽트됩니다.
+- 프로필(Profile) 등록 시 명령어로 `C:\Windows\System32\OpenSSH\ssh.exe`를 지정하거나, Windows `PATH` 환경 변수에서 `C:\Windows\System32\OpenSSH`가 MSYS2 경로보다 우선순위에 오도록 설정하여 사용하세요.
 
 ---
 

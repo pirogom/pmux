@@ -46,6 +46,14 @@ func NewServer(port int) *Server {
 var wsWriteMu sync.Map // map[*websocket.Conn]*sync.Mutex
 
 func safeWriteWS(conn *websocket.Conn, data []byte) error {
+	return safeWriteWSMsg(conn, websocket.MessageText, data)
+}
+
+func safeWriteWSBinary(conn *websocket.Conn, data []byte) error {
+	return safeWriteWSMsg(conn, websocket.MessageBinary, data)
+}
+
+func safeWriteWSMsg(conn *websocket.Conn, msgType websocket.MessageType, data []byte) error {
 	if conn == nil {
 		return nil
 	}
@@ -56,7 +64,7 @@ func safeWriteWS(conn *websocket.Conn, data []byte) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return conn.Write(ctx, websocket.MessageText, data)
+	return conn.Write(ctx, msgType, data)
 }
 
 func removeWSConn(conn *websocket.Conn) {
@@ -560,16 +568,16 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 	// Send active VT mode preamble (e.g. Alternate Buffer, SGR Mouse, Bracketed Paste) before history
 	preamble := pane.GetModePreamble()
 	if len(preamble) > 0 {
-		_ = safeWriteWS(conn, preamble)
+		_ = safeWriteWSBinary(conn, preamble)
 	}
 
 	// Send history buffer on attach before registering live channel
 	history := pane.Buffer.Bytes()
 	if len(history) > 0 {
-		_ = safeWriteWS(conn, history)
+		_ = safeWriteWSBinary(conn, history)
 	}
 
-	sendCh := make(chan []byte, 512)
+	sendCh := make(chan []byte, 1024)
 	pane.mu.Lock()
 	pane.Clients[conn] = sendCh
 	pane.mu.Unlock()
@@ -600,7 +608,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 				buf.Write(chunk)
 
 			drainLoop:
-				for buf.Len() < 64*1024 {
+				for buf.Len() < 128*1024 {
 					select {
 					case extra, ok := <-sendCh:
 						if !ok {
@@ -612,7 +620,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				if err := safeWriteWS(conn, buf.Bytes()); err != nil {
+				if err := safeWriteWSBinary(conn, buf.Bytes()); err != nil {
 					cancel()
 					return
 				}

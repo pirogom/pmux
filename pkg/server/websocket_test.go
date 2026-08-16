@@ -228,3 +228,75 @@ func TestDecoupledWritePump_HighThroughputBurst(t *testing.T) {
 		t.Fatalf("timed out waiting for burst data, received %d / %d bytes", totalBytesReceived, totalChunks*chunkSize)
 	}
 }
+
+func TestSafeWriteWSBinary_SplitUTF8Chunks(t *testing.T) {
+	var serverConn *websocket.Conn
+	var serverConnMu sync.Mutex
+	ready := make(chan struct{})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			t.Errorf("Accept failed: %v", err)
+			return
+		}
+		c.SetReadLimit(16 * 1024 * 1024)
+		serverConnMu.Lock()
+		serverConn = c
+		serverConnMu.Unlock()
+		close(ready)
+
+		for {
+			if _, _, err := c.Read(r.Context()); err != nil {
+				break
+			}
+		}
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientConn, _, err := websocket.Dial(ctx, "ws"+ts.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer clientConn.Close(websocket.StatusNormalClosure, "")
+
+	<-ready
+	serverConnMu.Lock()
+	sc := serverConn
+	serverConnMu.Unlock()
+	defer removeWSConn(sc)
+
+	// "한글" is UTF-8: 0xED 0x95 0x9C, 0xEA 0xB8 0x80 (6 bytes total)
+	// Split into chunk 1: 0xED 0x95 (invalid standalone UTF-8)
+	// Split into chunk 2: 0x9C 0xEA 0xB8 0x80
+	chunk1 := []byte{0xED, 0x95}
+	chunk2 := []byte{0x9C, 0xEA, 0xB8, 0x80}
+
+	if err := safeWriteWSBinary(sc, chunk1); err != nil {
+		t.Fatalf("safeWriteWSBinary chunk1 failed: %v", err)
+	}
+	if err := safeWriteWSBinary(sc, chunk2); err != nil {
+		t.Fatalf("safeWriteWSBinary chunk2 failed: %v", err)
+	}
+
+	var received bytes.Buffer
+	for received.Len() < 6 {
+		mt, msg, err := clientConn.Read(context.Background())
+		if err != nil {
+			t.Fatalf("client read failed on split UTF-8 chunks: %v", err)
+		}
+		if mt != websocket.MessageBinary {
+			t.Errorf("expected MessageBinary, got %v", mt)
+		}
+		received.Write(msg)
+	}
+
+	if received.String() != "한글" {
+		t.Errorf("expected reconstructed text '한글', got %q", received.String())
+	}
+}

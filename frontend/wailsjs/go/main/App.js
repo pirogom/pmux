@@ -18,6 +18,10 @@ export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
 
+export function ExportSSH(arg1) {
+  return window['go']['main']['App']['ExportSSH'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -34,6 +38,10 @@ export function GetProfiles() {
   return window['go']['main']['App']['GetProfiles']();
 }
 
+export function GetSSHConfig() {
+  return window['go']['main']['App']['GetSSHConfig']();
+}
+
 export function GetServerPort() {
   return window['go']['main']['App']['GetServerPort']();
 }
@@ -48,6 +56,10 @@ export function GitPull(arg1) {
 
 export function GitPush(arg1) {
   return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function ImportSSH(arg1) {
+  return window['go']['main']['App']['ImportSSH'](arg1);
 }
 
 export function KillServer() {
@@ -68,6 +80,10 @@ export function SaveGitPollInterval(arg1) {
 
 export function SaveProfile(arg1) {
   return window['go']['main']['App']['SaveProfile'](arg1);
+}
+
+export function SaveSSHConfig(arg1) {
+  return window['go']['main']['App']['SaveSSHConfig'](arg1);
 }
 
 export function SelectDirectory() {

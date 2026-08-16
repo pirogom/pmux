@@ -3,6 +3,7 @@
 import {main} from '../models';
 import {config} from '../models';
 import {git} from '../models';
+import {ssh} from '../models';
 
 export function ClosePane(arg1:string,arg2:string):Promise<void>;
 
@@ -12,6 +13,8 @@ export function CreateSession(arg1:main.CreateSessionReq):Promise<Record<string,
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
+export function ExportSSH(arg1:string):Promise<void>;
+
 export function GetConfig():Promise<config.Config>;
 
 export function GetDetectedProfiles():Promise<Array<config.Profile>>;
@@ -20,6 +23,8 @@ export function GetGitStatus(arg1:string):Promise<git.GitStatusResult>;
 
 export function GetProfiles():Promise<Array<config.Profile>>;
 
+export function GetSSHConfig():Promise<ssh.Config>;
+
 export function GetServerPort():Promise<number>;
 
 export function GetSessions():Promise<Array<any>>;
@@ -27,6 +32,8 @@ export function GetSessions():Promise<Array<any>>;
 export function GitPull(arg1:string):Promise<string>;
 
 export function GitPush(arg1:string):Promise<string>;
+
+export function ImportSSH(arg1:string):Promise<void>;
 
 export function KillServer():Promise<void>;
 
@@ -37,6 +44,8 @@ export function RenameSession(arg1:string,arg2:string):Promise<void>;
 export function SaveGitPollInterval(arg1:number):Promise<void>;
 
 export function SaveProfile(arg1:config.Profile):Promise<void>;
+
+export function SaveSSHConfig(arg1:ssh.Config):Promise<void>;
 
 export function SelectDirectory():Promise<string>;
 

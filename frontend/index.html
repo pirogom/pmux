@@ -198,9 +198,92 @@
         </div>
     </div>
 
+    <!-- SSH Manager Modal -->
+    <div id="ssh-modal" class="modal hidden">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3>SSH Manager</h3>
+                <button id="btn-close-ssh-modal" class="icon-btn">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="ssh-client-path">SSH Client Path</label>
+                    <div class="input-with-btn">
+                        <input type="text" id="ssh-client-path" placeholder="C:\Windows\System32\OpenSSH\ssh.exe" />
+                        <button id="btn-browse-ssh-client" class="btn btn-secondary btn-browse" type="button" title="Browse Executable">📁 Browse</button>
+                    </div>
+                </div>
+                <div class="ssh-address-header">
+                    <span class="sidebar-section-title">ADDRESS BOOK</span>
+                    <button id="btn-add-ssh-address" class="btn btn-secondary btn-sm">➕ Add Address</button>
+                </div>
+                <div id="ssh-address-list" class="ssh-address-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-import-ssh" class="btn btn-secondary">Import</button>
+                <button id="btn-export-ssh" class="btn btn-secondary">Export</button>
+                <button id="btn-save-ssh-config" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SSH Address Edit Modal -->
+    <div id="ssh-address-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3 id="ssh-address-modal-title">Add Address</h3>
+                <button id="btn-close-ssh-address-modal" class="icon-btn">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="ssh-addr-name">Name</label>
+                    <input type="text" id="ssh-addr-name" placeholder="e.g. Production Server" maxlength="128" />
+                </div>
+                <div class="form-group">
+                    <label for="ssh-addr-desc">Description (Optional)</label>
+                    <input type="text" id="ssh-addr-desc" placeholder="e.g. DB server" maxlength="256" />
+                </div>
+                <div class="form-group">
+                    <label for="ssh-addr-host">Host Address</label>
+                    <input type="text" id="ssh-addr-host" placeholder="e.g. 192.168.0.10 or example.com:22" maxlength="256" />
+                </div>
+                <div class="form-group">
+                    <label for="ssh-addr-user">Account (Optional)</label>
+                    <input type="text" id="ssh-addr-user" placeholder="e.g. root" maxlength="128" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-ssh-address" class="btn btn-secondary">Cancel</button>
+                <button id="btn-save-ssh-address" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SSH Export/Import Password Modal -->
+    <div id="ssh-pass-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3 id="ssh-pass-title">Export Password</h3>
+                <button id="btn-close-ssh-pass-modal" class="icon-btn">✖</button>
+            </div>
+            <div class="modal-body">
+                <p id="ssh-pass-message" class="ssh-pass-message">Enter a password to encrypt the export file.</p>
+                <div class="form-group">
+                    <input type="password" id="ssh-pass-input" placeholder="Password" autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="ssh-pass-confirm-group" class="form-group hidden">
+                    <input type="password" id="ssh-pass-confirm-input" placeholder="Confirm Password" autocomplete="off" spellcheck="false" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-ssh-pass" class="btn btn-secondary">Cancel</button>
+                <button id="btn-ok-ssh-pass" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script type="module" src="./src/main.js"></script>
-</body>
+    <script type="module" src="./src/main.js"></script></body>
 </html>

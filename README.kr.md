@@ -19,6 +19,7 @@
 - **Pane 웹소켓 자동 재접속 (Auto-Reconnect)**: 터미널 커넥션이 끊어질 경우 1초 간격으로 최대 3회 자동 재접속 시도 및 Toast 토스트 알림 안내.
 - **접고 펼치는 사이드바 아코디언 UI (Collapsible Accordion)**: 사이드바의 **ACTIVE SESSIONS** 및 **PROFILES** 섹션을 접고 펼칠 수 있으며 `localStorage`에 상태가 보존됨. PROFILES 섹션을 접으면 ACTIVE SESSIONS 목록이 남은 수직 공간을 100% 가득 활용하는 유연한 높이 동적 확장 기능 제공.
 - **통합 Git 대시보드 및 커밋되지 않은 파일 감지**: 현재 활성화된 터미널 Pane의 작업 디렉터리를 자동 감지하여 브랜치 상태와 커밋되지 않은 파일 유무를 빠르게 시각적으로 확인.
+- **SSH 주소록 및 원클릭 접속 (SSH Address Book & Quick Connect)**: Pane별 확장 툴바(`Ctrl` 키를 누르면 표시)에서 설정된 SSH 클라이언트로 원클릭 SSH 접속이 가능합니다. 암호화된 주소록(`~/.pmux/ssh.conf`)을 제공하며, 다른 기기로의 데이터 이전을 위한 비밀번호 보호 Export/Import를 지원합니다.
 
 ---
 
@@ -84,6 +85,45 @@ SSH 원격 접속 시에는 MSYS2 내장 `ssh` 대신 **Windows 기본 내장 Op
 - **실행 파일 경로**: `C:\Windows\System32\OpenSSH\ssh.exe`
 - Windows 기본 `ssh.exe`는 Windows ConPTY API와 완벽하게 호환되어, 원격 서버에서 `Ctrl + C`를 누르더라도 SSH 세션 연결이 유지되고 원격 프로세스만 정상적으로 인터럽트됩니다.
 - 프로필(Profile) 등록 시 명령어로 `C:\Windows\System32\OpenSSH\ssh.exe`를 지정하거나, Windows `PATH` 환경 변수에서 `C:\Windows\System32\OpenSSH`가 MSYS2 경로보다 우선순위에 오도록 설정하여 사용하세요.
+
+---
+
+## 🔐 SSH 관리자 (SSH Manager & 주소록)
+
+내장 SSH 관리자를 사용하면 `ssh` 명령을 직접 입력하지 않고도 어떤 Pane에서든 SSH 접속을 시작할 수 있습니다.
+
+### SSH 관리자 열기
+- `Ctrl` 키를 누르고 있으면 각 Pane의 **왼쪽 상단**에 확장 툴바가 표시됩니다 (오른쪽 상단에는 ✖ 닫기 버튼이 함께 표시됨).
+- 툴바의 **SSH 아이콘**을 클릭하면 해당 Pane에 대한 SSH 관리자가 열립니다.
+
+### SSH 클라이언트 경로
+- **SSH Client Path** 필드에서 SSH 클라이언트 실행 파일 경로를 지정합니다 (**📁 Browse** 버튼으로 파일 선택 가능).
+- 기본값: `C:\Windows\System32\OpenSSH\ssh.exe` (Windows 10/11에 기본 내장된 OpenSSH 클라이언트).
+- 기본 클라이언트를 사용하면 터미널에 `ssh ...`만 입력됩니다 (System32는 항상 `PATH`에 포함됨). 커스텀 경로를 설정하면 전체 경로를 따옴표로 감싸 입력하며, PowerShell Pane에서는 `& ` 프리픽스가 붙습니다.
+
+### 주소록
+각 항목은 다음 정보를 저장합니다:
+- **Name** – 항목을 구분하기 위한 닉네임/타이틀.
+- **Description** – 부가 설명 (옵션).
+- **Host Address** – 접속할 대상 서버 주소 (IP, 호스트명, URL; `host:port` 형식 지원).
+- **Account** – 로그인 계정 (옵션). 설정 시 `ssh user@host`, 미설정 시 `ssh host`가 입력됩니다.
+
+### 접속 (Connect)
+- 주소를 선택하고 **Connect**를 클릭합니다.
+- pmux는 선택한 Pane의 터미널에 `ssh` 명령을 입력해줍니다 — 이후의 호스트 키 확인, 비밀번호 입력 등은 터미널에서 직접 처리하면 됩니다.
+
+### 데이터 저장 및 보안
+- 설정과 주소록은 `~/.pmux/ssh.conf`에 저장됩니다.
+- 파일은 **Windows DPAPI**(`CryptProtectData`)로 암호화되어, **동일한 Windows 사용자 계정 + 동일한 기기**에서만 복호화할 수 있습니다 — 소스코드에 암호화 키가 존재하지 않습니다.
+- 파일에 **버전 값**이 포함되어 있어, 호환되지 않는 pmux 버전이 작성한 파일은 읽지 않고 덮어쓰지도 않습니다.
+- > [!NOTE]
+  > Windows 관리자가 계정 비밀번호를 **강제 초기화**하면 DPAPI로 보호된 데이터를 복구하지 못할 수 있습니다. 일반적인 비밀번호 변경은 문제없습니다.
+
+### Export / Import (다른 기기로 데이터 이전)
+`ssh.conf`는 Windows 사용자 계정과 기기에 바인딩되어 있으므로, 다른 컴퓨터로의 이전은 비밀번호 보호 Export/Import로 진행합니다:
+- **Export** – 비밀번호를 입력(확인 입력 포함)합니다. 주소록이 입력한 비밀번호로 암호화(scrypt 키 파생 + AES-256-GCM)되어 `*.pmuxssh` 파일로 저장됩니다.
+- **Import** – `*.pmuxssh` 파일을 선택하고 해당 비밀번호를 입력합니다. **비밀번호가 일치해야만** Import가 성공하며, 틀린 비밀번호는 거부됩니다.
+- Import 시 현재 주소록은 가져온 데이터로 **교체**됩니다.
 
 ---
 

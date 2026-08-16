@@ -49,6 +49,28 @@ const btnShutdownServer = document.getElementById('btn-shutdown-server');
 
 const toastContainerEl = document.getElementById('toast-container');
 
+const sshModalEl = document.getElementById('ssh-modal');
+const sshClientPathInput = document.getElementById('ssh-client-path');
+const sshAddressListEl = document.getElementById('ssh-address-list');
+const sshAddressModalEl = document.getElementById('ssh-address-modal');
+const sshAddrNameInput = document.getElementById('ssh-addr-name');
+const sshAddrDescInput = document.getElementById('ssh-addr-desc');
+const sshAddrHostInput = document.getElementById('ssh-addr-host');
+const sshAddrUserInput = document.getElementById('ssh-addr-user');
+const sshPassModalEl = document.getElementById('ssh-pass-modal');
+const sshPassTitleEl = document.getElementById('ssh-pass-title');
+const sshPassMessageEl = document.getElementById('ssh-pass-message');
+const sshPassInput = document.getElementById('ssh-pass-input');
+const sshPassConfirmGroupEl = document.getElementById('ssh-pass-confirm-group');
+const sshPassConfirmInput = document.getElementById('ssh-pass-confirm-input');
+
+// SSH Manager State
+let sshConfig = null;
+let sshPaneId = null;
+let editingSshAddressId = null;
+let sshPassMode = 'export'; // 'export' | 'import'
+let sshPassResolve = null;
+
 // Initialization
 let isAppInitialized = false;
 
@@ -482,6 +504,72 @@ function setupEventListeners() {
     addClick('btn-save-profile', saveProfileFromModal);
     addClick('btn-refresh-sessions', refreshSessions);
 
+    // SSH Manager
+    addClick('btn-close-ssh-modal', closeSSHManager);
+    addClick('btn-browse-ssh-client', async () => {
+        try {
+            if (window.go && window.go.main && window.go.main.App && window.go.main.App.SelectFile) {
+                const filePath = await window.go.main.App.SelectFile();
+                if (filePath) {
+                    sshClientPathInput.value = filePath;
+                }
+            }
+        } catch (e) {
+            console.error('File dialog error:', e);
+        }
+    });
+    addClick('btn-add-ssh-address', () => openSSHAddressModal(null));
+    addClick('btn-save-ssh-config', saveSSHConfigFromModal);
+    addClick('btn-export-ssh', () => {
+        openSSHPasswordModal('export', 'Export SSH Addresses', 'Enter a password to encrypt the export file.')
+            .then(pwd => doExportSSH(pwd))
+            .catch(() => {});
+    });
+    addClick('btn-import-ssh', () => {
+        openSSHPasswordModal('import', 'Import SSH Addresses', 'Enter the password of the export file.')
+            .then(pwd => doImportSSH(pwd))
+            .catch(() => {});
+    });
+    addClick('btn-close-ssh-address-modal', closeSSHAddressModal);
+    addClick('btn-cancel-ssh-address', closeSSHAddressModal);
+    addClick('btn-save-ssh-address', saveSSHAddressFromModal);
+    addClick('btn-close-ssh-pass-modal', cancelSSHPasswordModal);
+    addClick('btn-cancel-ssh-pass', cancelSSHPasswordModal);
+    addClick('btn-ok-ssh-pass', confirmSSHPasswordModal);
+    if (sshPassInput) {
+        sshPassInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmSSHPasswordModal();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelSSHPasswordModal();
+            }
+        });
+    }
+    if (sshPassConfirmInput) {
+        sshPassConfirmInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmSSHPasswordModal();
+            }
+        });
+    }
+    if (sshAddressModalEl) {
+        sshAddressModalEl.addEventListener('click', (e) => {
+            if (e.target === sshAddressModalEl) {
+                closeSSHAddressModal();
+            }
+        });
+    }
+    if (sshModalEl) {
+        sshModalEl.addEventListener('click', (e) => {
+            if (e.target === sshModalEl) {
+                closeSSHManager();
+            }
+        });
+    }
+
     addClick('btn-shutdown-server', openShutdownModal);
     addClick('btn-cancel-shutdown', closeShutdownModal);
     addClick('btn-close-shutdown-modal', closeShutdownModal);
@@ -838,6 +926,27 @@ function renderLayoutTree(node, sess, isRoot = true) {
         if (paneData) {
             initXtermPane(paneEl, paneData);
         }
+
+        // Pane Extension Toolbar (Visible ONLY when Ctrl key is pressed)
+        const paneToolbar = document.createElement('div');
+        paneToolbar.className = 'pane-toolbar';
+
+        const sshToolbarBtn = document.createElement('button');
+        sshToolbarBtn.className = 'pane-toolbar-btn';
+        sshToolbarBtn.title = 'SSH Manager (Ctrl + Click)';
+        const sshToolbarImg = document.createElement('img');
+        sshToolbarImg.src = './src/assets/images/ssh-white.svg';
+        sshToolbarImg.alt = 'SSH';
+        sshToolbarBtn.appendChild(sshToolbarImg);
+        sshToolbarBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!e.ctrlKey && !document.body.classList.contains('ctrl-pressed')) {
+                return;
+            }
+            openSSHManager(sess.id, node.id);
+        });
+        paneToolbar.appendChild(sshToolbarBtn);
+        paneEl.appendChild(paneToolbar);
 
         // Close Pane Button (Visible and enabled ONLY when Ctrl key is pressed)
         const closeBtn = document.createElement('button');
@@ -1578,9 +1687,288 @@ async function saveProfileFromModal() {
     }
 }
 
+const DEFAULT_SSH_CLIENT_PATH = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
+
+async function openSSHManager(sessionId, paneId) {
+    sshPaneId = paneId;
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSSHConfig) {
+            sshConfig = await window.go.main.App.GetSSHConfig();
+        } else {
+            sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
+        }
+    } catch (e) {
+        const msg = (e && e.message) || String(e);
+        if (/version/i.test(msg)) {
+            showToast('SSH config version is incompatible. Config was not loaded.', 'error');
+        } else {
+            showToast('Failed to load SSH config: ' + msg, 'error');
+        }
+        sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
+    }
+    if (sshClientPathInput) {
+        sshClientPathInput.value = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
+    }
+    renderSSHAddressList();
+    sshModalEl.classList.remove('hidden');
+}
+
+function closeSSHManager() {
+    sshModalEl.classList.add('hidden');
+    sshPaneId = null;
+}
+
+function renderSSHAddressList() {
+    sshAddressListEl.innerHTML = '';
+    const list = (sshConfig && sshConfig.addresses) || [];
+    if (list.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'ssh-empty';
+        empty.textContent = 'No addresses saved yet. Click "Add Address" to create one.';
+        sshAddressListEl.appendChild(empty);
+        return;
+    }
+
+    list.forEach(addr => {
+        const item = document.createElement('div');
+        item.className = 'ssh-address-item';
+
+        const info = document.createElement('div');
+        info.className = 'ssh-address-item-info';
+        const name = document.createElement('div');
+        name.className = 'ssh-address-item-name';
+        name.textContent = addr.name || '(unnamed)';
+        const desc = document.createElement('div');
+        desc.className = 'ssh-address-item-desc';
+        desc.textContent = addr.user ? `${addr.user}@${addr.host}` : addr.host;
+        if (addr.description) {
+            desc.textContent += ` — ${addr.description}`;
+        }
+        info.appendChild(name);
+        info.appendChild(desc);
+
+        const actions = document.createElement('div');
+        actions.className = 'ssh-address-item-actions';
+
+        const connectBtn = document.createElement('button');
+        connectBtn.className = 'btn btn-primary btn-sm';
+        connectBtn.textContent = 'Connect';
+        connectBtn.title = 'Connect to this address in the pane terminal';
+        connectBtn.addEventListener('click', () => sshConnect(addr));
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'icon-btn-small';
+        editBtn.textContent = '✏️';
+        editBtn.title = 'Edit Address';
+        editBtn.addEventListener('click', () => openSSHAddressModal(addr));
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'icon-btn-small del-btn';
+        delBtn.textContent = '✖';
+        delBtn.title = 'Delete Address';
+        delBtn.addEventListener('click', async () => {
+            const confirmed = await showConfirm('Delete Address', `Are you sure you want to delete "${addr.name}"?`);
+            if (!confirmed) return;
+            sshConfig.addresses = sshConfig.addresses.filter(a => a.id !== addr.id);
+            renderSSHAddressList();
+            showToast('Address deleted (click Save to persist)', 'info');
+        });
+
+        actions.appendChild(connectBtn);
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+
+        item.appendChild(info);
+        item.appendChild(actions);
+        sshAddressListEl.appendChild(item);
+    });
+}
+
+function openSSHAddressModal(addrToEdit) {
+    editingSshAddressId = addrToEdit ? addrToEdit.id : null;
+    const titleEl = document.getElementById('ssh-address-modal-title');
+    if (titleEl) titleEl.textContent = addrToEdit ? 'Edit Address' : 'Add Address';
+    sshAddrNameInput.value = addrToEdit ? (addrToEdit.name || '') : '';
+    sshAddrDescInput.value = addrToEdit ? (addrToEdit.description || '') : '';
+    sshAddrHostInput.value = addrToEdit ? (addrToEdit.host || '') : '';
+    sshAddrUserInput.value = addrToEdit ? (addrToEdit.user || '') : '';
+    sshAddressModalEl.classList.remove('hidden');
+    setTimeout(() => sshAddrNameInput.focus(), 50);
+}
+
+function closeSSHAddressModal() {
+    editingSshAddressId = null;
+    sshAddressModalEl.classList.add('hidden');
+}
+
+function saveSSHAddressFromModal() {
+    const name = sshAddrNameInput.value.trim();
+    const host = sshAddrHostInput.value.trim();
+    if (!name || !host) {
+        showToast('Please specify name and host address', 'error');
+        return;
+    }
+
+    const addr = {
+        id: editingSshAddressId || `ssh_addr_${Date.now()}`,
+        name,
+        description: sshAddrDescInput.value.trim(),
+        host,
+        user: sshAddrUserInput.value.trim()
+    };
+
+    if (!sshConfig) sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
+    if (!sshConfig.addresses) sshConfig.addresses = [];
+
+    if (editingSshAddressId) {
+        const idx = sshConfig.addresses.findIndex(a => a.id === editingSshAddressId);
+        if (idx !== -1) {
+            sshConfig.addresses[idx] = addr;
+        }
+    } else {
+        sshConfig.addresses.push(addr);
+    }
+
+    renderSSHAddressList();
+    closeSSHAddressModal();
+    showToast('Address saved (click Save to persist)', 'info');
+}
+
+async function saveSSHConfigFromModal() {
+    if (!sshConfig) return;
+    sshConfig.clientPath = sshClientPathInput.value.trim() || DEFAULT_SSH_CLIENT_PATH;
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveSSHConfig) {
+            await window.go.main.App.SaveSSHConfig(sshConfig);
+        } else {
+            await apiPost('/api/ssh/config', sshConfig);
+        }
+        showToast('SSH config saved', 'success');
+    } catch (e) {
+        showToast('Failed to save SSH config: ' + (e.message || e), 'error');
+    }
+}
+
+function sshConnect(addr) {
+    if (!sshPaneId) {
+        showToast('No pane selected for SSH connection', 'error');
+        return;
+    }
+    const paneEntry = activePanesMap.get(sshPaneId);
+    if (!paneEntry || !paneEntry.ws || paneEntry.ws.readyState !== WebSocket.OPEN) {
+        showToast('Terminal connection is not available for this pane', 'error');
+        return;
+    }
+
+    const target = addr.user ? `${addr.user}@${addr.host}` : addr.host;
+    if (!target) {
+        showToast('Address has no host', 'error');
+        return;
+    }
+
+    const clientPath = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
+    let cmd;
+    if (!clientPath || clientPath.trim().toLowerCase() === DEFAULT_SSH_CLIENT_PATH.toLowerCase()) {
+        // System OpenSSH lives in System32, which is always on PATH
+        cmd = `ssh ${target}`;
+    } else {
+        const shell = (paneEntry.command || '').toLowerCase();
+        const isPowershell = shell.includes('powershell') || shell.includes('pwsh');
+        const quoted = `"${clientPath.trim()}"`;
+        cmd = isPowershell ? `& ${quoted} ${target}` : `${quoted} ${target}`;
+    }
+
+    paneEntry.ws.send(JSON.stringify({ type: 'input', data: cmd + '\r' }));
+    showToast(`SSH connection started: ${cmd}`, 'success');
+    closeSSHManager();
+}
+
+function openSSHPasswordModal(mode, title, message) {
+    return new Promise((resolve) => {
+        sshPassMode = mode;
+        sshPassResolve = resolve;
+        sshPassTitleEl.textContent = title;
+        sshPassMessageEl.textContent = message;
+        sshPassInput.value = '';
+        sshPassConfirmInput.value = '';
+        sshPassConfirmGroupEl.classList.toggle('hidden', mode !== 'export');
+        sshPassModalEl.classList.remove('hidden');
+        setTimeout(() => sshPassInput.focus(), 50);
+    });
+}
+
+function cancelSSHPasswordModal() {
+    sshPassModalEl.classList.add('hidden');
+    if (sshPassResolve) {
+        sshPassResolve(null);
+        sshPassResolve = null;
+    }
+}
+
+function confirmSSHPasswordModal() {
+    const pwd = sshPassInput.value;
+    if (sshPassMode === 'export') {
+        if (!pwd) {
+            showToast('Please enter a password', 'error');
+            return;
+        }
+        if (pwd !== sshPassConfirmInput.value) {
+            showToast('Passwords do not match', 'error');
+            return;
+        }
+    } else if (!pwd) {
+        showToast('Please enter the password', 'error');
+        return;
+    }
+    sshPassModalEl.classList.add('hidden');
+    if (sshPassResolve) {
+        sshPassResolve(pwd);
+        sshPassResolve = null;
+    }
+}
+
+async function doExportSSH(password) {
+    if (!password) return;
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.ExportSSH) {
+            await window.go.main.App.ExportSSH(password);
+        } else {
+            await apiPost('/api/ssh/export', { password });
+        }
+        showToast('SSH addresses exported', 'success');
+    } catch (e) {
+        showToast('Export failed: ' + (e.message || e), 'error');
+    }
+}
+
+async function doImportSSH(password) {
+    if (!password) return;
+    try {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.ImportSSH) {
+            await window.go.main.App.ImportSSH(password);
+        } else {
+            await apiPost('/api/ssh/import', { password });
+        }
+        sshConfig = await window.go.main.App.GetSSHConfig();
+        if (sshClientPathInput) {
+            sshClientPathInput.value = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
+        }
+        renderSSHAddressList();
+        showToast('SSH addresses imported', 'success');
+    } catch (e) {
+        const msg = (e && e.message) || String(e);
+        if (/password|decrypt/i.test(msg)) {
+            showToast('Import failed: incorrect password', 'error');
+        } else if (/version/i.test(msg)) {
+            showToast('Import failed: incompatible export file version', 'error');
+        } else {
+            showToast('Import failed: ' + msg, 'error');
+        }
+    }
+}
+
 // Git Status Collapsible Floating Panel & Resizer
-function initGitPanelResizer() {
-    const resizer = document.getElementById('git-panel-resizer');
+function initGitPanelResizer() {    const resizer = document.getElementById('git-panel-resizer');
     if (!resizer || !gitPanelEl) return;
 
     let isResizing = false;

@@ -19,6 +19,7 @@
 - **Pane Auto-Reconnect**: Automatically retries WebSocket connections up to 3 times (with a 1-second delay) upon unexpected connection drops, displaying Toast notifications for connection statuses.
 - **Collapsible Accordion Sidebar UI**: Collapse or expand the **ACTIVE SESSIONS** and **PROFILES** sidebar sections with persistent `localStorage` states. When PROFILES is collapsed, the ACTIVE SESSIONS list dynamically expands to utilize all remaining vertical space.
 - **Integrated Git Dashboard & Uncommitted File Tracker**: Detects the current working directory of the active terminal pane to quickly highlight uncommitted files and repository branch status.
+- **SSH Address Book & Quick Connect**: A per-pane extension toolbar (visible while holding `Ctrl`) provides one-click SSH connections through your configured SSH client. The encrypted address book (stored in `~/.pmux/ssh.conf`) supports password-protected Export/Import for migrating data between machines.
 
 ---
 
@@ -84,6 +85,45 @@ For SSH connections, we strongly recommend using the **native Windows OpenSSH cl
 - **Executable Path**: `C:\Windows\System32\OpenSSH\ssh.exe`
 - The native Windows `ssh.exe` is fully compatible with Windows ConPTY. Pressing `Ctrl + C` correctly interrupts the running remote foreground process without killing the local SSH client.
 - When creating a Profile, set the command to `C:\Windows\System32\OpenSSH\ssh.exe` or ensure `C:\Windows\System32\OpenSSH` has higher precedence than MSYS2 paths in your system's `PATH` environment variable.
+
+---
+
+## 🔐 SSH Manager (Address Book & Quick Connect)
+
+The built-in SSH Manager lets you start SSH connections from any pane without typing the `ssh` command manually.
+
+### Opening the SSH Manager
+- Press and hold the `Ctrl` key to reveal the extension toolbar at the **top-left corner** of each pane (the ✖ close button appears at the top-right).
+- Click the **SSH icon** in the toolbar to open the SSH Manager for that pane.
+
+### SSH Client Path
+- Set the SSH client executable path in the **SSH Client Path** field (use the **📁 Browse** button to pick a file).
+- Default: `C:\Windows\System32\OpenSSH\ssh.exe` (the OpenSSH client bundled with Windows 10/11).
+- When the default client is used, pmux types `ssh ...` into the terminal (System32 is always on `PATH`). For a custom path, the full quoted path is typed instead (prefixed with `& ` for PowerShell panes).
+
+### Address Book
+Each entry stores:
+- **Name** – nickname/title for the entry.
+- **Description** – optional additional notes.
+- **Host Address** – target server address (IP, hostname, or URL; `host:port` syntax is supported).
+- **Account** – optional login user. If set, pmux types `ssh user@host`; otherwise it types `ssh host`.
+
+### Connecting
+- Select an address and click **Connect**.
+- pmux types the `ssh` command into the selected pane's terminal — everything after that (host key confirmation, password entry, etc.) is handled by you in the terminal.
+
+### Data Storage & Security
+- Settings and the address book are saved to `~/.pmux/ssh.conf`.
+- The file is encrypted with **Windows DPAPI** (`CryptProtectData`), so the data can only be decrypted by the **same Windows user account on the same machine** — no encryption key exists in the source code.
+- The file contains a **version field**; if a file was written by an incompatible pmux version, it is not loaded and is never overwritten.
+- > [!NOTE]
+  > A Windows admin **force-resetting** your account password can make DPAPI-protected data unrecoverable. Normal password changes are fine.
+
+### Export / Import (migrating to another machine)
+Because `ssh.conf` is bound to your Windows user account and machine, moving data to another computer is done via password-protected export/import:
+- **Export** – enter a password (and confirm it). The address book is encrypted with your password (scrypt key derivation + AES-256-GCM) and saved as a `*.pmuxssh` file.
+- **Import** – pick a `*.pmuxssh` file and enter its password. Import succeeds only when the password matches; a wrong password is rejected.
+- On import, the current address book is **replaced** by the imported data.
 
 ---
 

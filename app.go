@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"pmux/pkg/config"
 	"pmux/pkg/git"
 	"pmux/pkg/profile"
 	"pmux/pkg/server"
+	"pmux/pkg/ssh"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -327,6 +329,74 @@ func (a *App) SelectDirectory() (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// GetSSHConfig loads the (DPAPI-encrypted) ssh settings and address book.
+func (a *App) GetSSHConfig() (*ssh.Config, error) {
+	return ssh.Load()
+}
+
+// SaveSSHConfig persists the ssh settings and address book.
+func (a *App) SaveSSHConfig(cfg *ssh.Config) error {
+	return ssh.Save(cfg)
+}
+
+// ExportSSH encrypts the current ssh config with the user-provided password
+// and saves it through a file dialog for transfer to another machine.
+func (a *App) ExportSSH(password string) error {
+	cfg, err := ssh.Load()
+	if err != nil {
+		return err
+	}
+	data, err := ssh.Export(cfg, password)
+	if err != nil {
+		return err
+	}
+
+	file, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export SSH Addresses",
+		DefaultFilename: "pmux-ssh-export.pmuxssh",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "pmux SSH Export (*.pmuxssh)", Pattern: "*.pmuxssh"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if file == "" {
+		return nil // dialog cancelled
+	}
+	return os.WriteFile(file, data, 0600)
+}
+
+// ImportSSH reads a password-encrypted export file through a file dialog,
+// decrypts it with the user-provided password, and replaces the current
+// ssh config with the imported data.
+func (a *App) ImportSSH(password string) error {
+	file, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import SSH Addresses",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "pmux SSH Export (*.pmuxssh)", Pattern: "*.pmuxssh"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if file == "" {
+		return nil // dialog cancelled
+	}
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	cfg, err := ssh.Import(data, password)
+	if err != nil {
+		return err
+	}
+	return ssh.Save(cfg)
 }
 
 func (a *App) QuitApp() {

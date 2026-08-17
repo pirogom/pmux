@@ -1225,6 +1225,29 @@ function initXtermPane(containerEl, paneData) {
     let hasEverConnected = false;
     let isReconnecting = false;
     let isWritingServerOutput = false;
+    let isReplayingHistory = true;
+
+    // Detect terminal internal auto-responses (e.g. OSC 10/11/4 color queries, DSR cursor reports, DECRQM mode reports)
+    const isTerminalQueryResponse = (str) => {
+        if (!str || typeof str !== 'string') return false;
+        // OSC 10/11/4 color query responses: \x1b]10;rgb:..., \x1b]11;rgb:..., \x1b]4;0;rgb:...
+        if (str.startsWith('\x1b]10;') || str.startsWith('\x1b]11;') || str.startsWith('\x1b]4;') || str.includes(';rgb:')) {
+            return true;
+        }
+        // DSR cursor position reports: \x1b[1;1R or \x1b[row;colR
+        if (/^\x1b\[\d+;\d+R$/.test(str)) {
+            return true;
+        }
+        // DECRQM mode reports: \x1b[?1016;2$y, \x1b[?2004;2$y, etc.
+        if (/^\x1b\[\?\d+;\d+\$y$/.test(str)) {
+            return true;
+        }
+        // Device Attributes: \x1b[?1;2c, \x1b[>0;...c
+        if (/^\x1b\[(\?|>)\d+.*c$/.test(str)) {
+            return true;
+        }
+        return false;
+    };
 
     const connectPaneWS = () => {
         const wsUrl = `ws://127.0.0.1:${serverPort}/ws/pane/${paneData.id}`;
@@ -1236,6 +1259,9 @@ function initXtermPane(containerEl, paneData) {
 
         ws.onopen = () => {
             console.log(`WebSocket connected to pane ${paneData.id} at ${wsUrl}`);
+            isReplayingHistory = true;
+            setTimeout(() => { isReplayingHistory = false; }, 600);
+
             if (isReconnecting) {
                 showToast('Terminal connection restored', 'success');
                 isReconnecting = false;
@@ -1246,20 +1272,34 @@ function initXtermPane(containerEl, paneData) {
                 try {
                     fitAddon.fit();
                     term.focus();
+                    if (ws.readyState === WebSocket.OPEN && term.cols >= 10 && term.rows >= 3) {
+                        ws.send(JSON.stringify({ type: 'redraw', cols: term.cols, rows: term.rows }));
+                    }
                 } catch (e) {}
-            }, 200);
+            }, 100);
         };
 
         ws.binaryType = 'arraybuffer';
 
+        const safeTermWrite = (data) => {
+            isWritingServerOutput = true;
+            try {
+                term.write(data, () => {
+                    isWritingServerOutput = false;
+                });
+            } catch (e) {
+                isWritingServerOutput = false;
+            }
+        };
+
         ws.onmessage = (event) => {
             if (typeof event.data === 'string') {
-                term.write(event.data);
+                safeTermWrite(event.data);
             } else if (event.data instanceof ArrayBuffer) {
-                term.write(new Uint8Array(event.data));
+                safeTermWrite(new Uint8Array(event.data));
             } else if (event.data instanceof Blob) {
                 event.data.text().then(text => {
-                    if (text) term.write(text);
+                    if (text) safeTermWrite(text);
                 });
             }
         };
@@ -1326,6 +1366,13 @@ function initXtermPane(containerEl, paneData) {
     };
 
     term.onData((data) => {
+        // Prevent xterm.js auto-replies (e.g. OSC color responses, cursor position reports)
+        // generated during history replay or server output rendering from echoing back to the shell stdin.
+        if (isWritingServerOutput || isReplayingHistory) {
+            if (isTerminalQueryResponse(data)) {
+                return;
+            }
+        }
         inputBatchBuf += data;
         if (!inputBatchTimer) {
             inputBatchTimer = setTimeout(flushInputBatch, 4);

@@ -131,6 +131,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/ssh/export", s.handleSSHExport)
 	mux.HandleFunc("/api/ssh/import", s.handleSSHImport)
 	mux.HandleFunc("/api/config/git-poll-interval", s.handleSaveGitPollInterval)
+	mux.HandleFunc("/api/config", s.handleGetConfig)
 	mux.HandleFunc("/api/server/kill", s.handleKillServer)
 	mux.HandleFunc("/ws/pane/", s.handleWSPane)
 	mux.HandleFunc("/ws/events", s.handleWSEvents)
@@ -229,6 +230,16 @@ func (s *Server) handleSplit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(pane)
+}
+
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(cfg)
 }
 
 func (s *Server) handleSaveGitPollInterval(w http.ResponseWriter, r *http.Request) {

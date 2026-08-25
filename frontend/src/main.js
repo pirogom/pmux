@@ -112,8 +112,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         setTimeout(initConfig, 200);
     }
 
-    // Initial Git Status poll timer (default 3 seconds)
-    startGitPollTimer(3);
+    // Initial Git Status poll timer (default 3 seconds, or the saved interval if already restored)
+    startGitPollTimer(currentGitPollInterval);
 });
 
 function startGitPollTimer(seconds) {
@@ -122,6 +122,17 @@ function startGitPollTimer(seconds) {
     }
     const sec = parseInt(seconds, 10) || 3;
     gitPollTimer = setInterval(updateGitStatus, sec * 1000);
+}
+
+let currentGitPollInterval = 3;
+
+function applyGitPollInterval(interval) {
+    const sec = parseInt(interval, 10);
+    if (!sec || sec < 1 || sec === currentGitPollInterval) return;
+    currentGitPollInterval = sec;
+    const pollSelectEl = document.getElementById('git-poll-interval-select');
+    if (pollSelectEl) pollSelectEl.value = String(sec);
+    startGitPollTimer(sec);
 }
 
 // Custom UI Components: Toast Notification & Custom Confirm Modal
@@ -211,6 +222,9 @@ function connectGlobalEventsWS() {
                     }
                 });
             } else if (data.type === 'profiles_updated' || data.type === 'config_updated') {
+                if (data.type === 'config_updated' && data.data && data.data.gitPollInterval) {
+                    applyGitPollInterval(data.data.gitPollInterval);
+                }
                 refreshConfigAndProfiles();
             }
         } catch (e) {
@@ -473,6 +487,7 @@ function setupEventListeners() {
     if (pollSelectEl) {
         pollSelectEl.addEventListener('change', async (e) => {
             const newInterval = parseInt(e.target.value, 10) || 3;
+            currentGitPollInterval = newInterval;
             startGitPollTimer(newInterval);
             try {
                 if (window.go && window.go.main && window.go.main.App && window.go.main.App.SaveGitPollInterval) {
@@ -1635,15 +1650,23 @@ async function refreshConfigAndProfiles() {
         // Query central daemon server REST API first to guarantee 0.01s real-time multi-client sync
         try {
             loaded = await apiGet('/api/profiles');
+            // Restore the saved git poll interval (REST path also covers the desktop app,
+            // so the Wails fallback below is only reached when the daemon is unreachable)
+            try {
+                const cfg = await apiGet('/api/config');
+                if (cfg && cfg.gitPollInterval) {
+                    applyGitPollInterval(cfg.gitPollInterval);
+                }
+            } catch (e2) {
+                console.warn('[pmux] Failed to load config from REST API:', e2);
+            }
         } catch (e) {
             if (window.go && window.go.main && window.go.main.App) {
                 if (window.go.main.App.GetConfig) {
                     const cfg = await window.go.main.App.GetConfig();
                     if (cfg) {
                         if (cfg.gitPollInterval) {
-                            const selectEl = document.getElementById('git-poll-interval-select');
-                            if (selectEl) selectEl.value = cfg.gitPollInterval;
-                            startGitPollTimer(cfg.gitPollInterval);
+                            applyGitPollInterval(cfg.gitPollInterval);
                         }
                         loaded = cfg.profiles || cfg.Profiles || [];
                     }

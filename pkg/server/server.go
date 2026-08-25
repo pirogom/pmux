@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"pmux/pkg/config"
 	"pmux/pkg/git"
+	"pmux/pkg/opendir"
 	"pmux/pkg/ssh"
 )
 
@@ -111,6 +112,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/sessions/close-session", s.handleCloseSession)
 	mux.HandleFunc("/api/sessions/rename", s.handleRenameSession)
 	mux.HandleFunc("/api/sessions/active-pane", s.handleSetActivePane)
+	mux.HandleFunc("/api/sessions/open-work-folder", s.handleOpenWorkFolder)
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
 	mux.HandleFunc("/api/profiles/notify-change", s.handleProfilesNotifyChange)
 	mux.HandleFunc("/api/git/status", s.handleGitStatus)
@@ -361,6 +363,24 @@ func (s *Server) handleSetActivePane(w http.ResponseWriter, r *http.Request) {
 		_ = s.sessionMgr.SetActivePane(req.SessionID, req.PaneID)
 	}
 	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleOpenWorkFolder opens the given work directory in the OS file manager,
+// mirroring the App.OpenWorkFolder Wails binding.
+func (s *Server) handleOpenWorkFolder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string `json:"workDir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := opendir.Open(req.WorkDir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

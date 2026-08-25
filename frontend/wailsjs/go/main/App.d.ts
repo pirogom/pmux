@@ -59,6 +59,8 @@ export function ImportSSH(arg1:string):Promise<void>;
 
 export function KillServer():Promise<void>;
 
+export function OpenWorkFolder(arg1:string):Promise<void>;
+
 export function QuitApp():Promise<void>;
 
 export function RenameSession(arg1:string,arg2:string):Promise<void>;

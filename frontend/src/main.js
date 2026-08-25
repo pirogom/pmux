@@ -19,6 +19,7 @@ const sessionListEl = document.getElementById('session-list');
 const profileListEl = document.getElementById('profile-list');
 const activeSessionTitleEl = document.getElementById('active-session-title');
 const btnRenameSessionEl = document.getElementById('btn-rename-session');
+const btnOpenWorkFolderEl = document.getElementById('btn-open-work-folder');
 const btnRefreshSessionPanesEl = document.getElementById('btn-refresh-session-panes');
 const terminalWorkspaceEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
@@ -529,6 +530,7 @@ function setupEventListeners() {
     }
 
     addClick('btn-rename-session', () => startEditingSessionTitle());
+    addClick('btn-open-work-folder', () => openWorkFolder());
     addClick('btn-refresh-session-panes', () => {
         if (!activeSession) return;
         reflowAllPanes(true, true);
@@ -808,6 +810,7 @@ async function closeSession(sessionId, sessionName) {
             emptyStateEl.style.display = 'flex';
             activeSessionTitleEl.textContent = 'No Active Session';
             if (btnRenameSessionEl) btnRenameSessionEl.classList.add('hidden');
+            if (btnOpenWorkFolderEl) btnOpenWorkFolderEl.classList.add('hidden');
             if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.add('hidden');
         }
 
@@ -957,6 +960,7 @@ function showEmptyState() {
     activePaneId = null;
     setSessionTitle('No Active Session');
     if (btnRenameSessionEl) btnRenameSessionEl.classList.add('hidden');
+    if (btnOpenWorkFolderEl) btnOpenWorkFolderEl.classList.add('hidden');
     if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.add('hidden');
     if (terminalWorkspaceEl) terminalWorkspaceEl.innerHTML = '';
     if (emptyStateEl) emptyStateEl.style.display = 'flex';
@@ -977,6 +981,7 @@ async function attachToSession(sessionId) {
     activeSession = sess;
     setSessionTitle(sess.name);
     if (btnRenameSessionEl) btnRenameSessionEl.classList.remove('hidden');
+    if (btnOpenWorkFolderEl) btnOpenWorkFolderEl.classList.remove('hidden');
     if (btnRefreshSessionPanesEl) btnRefreshSessionPanesEl.classList.remove('hidden');
     renderSessionList();
 
@@ -2247,6 +2252,27 @@ function getActiveWorkDir() {
     if (!activePaneId) return '';
     const paneInfo = activePanesMap.get(activePaneId);
     return paneInfo ? paneInfo.workDir : '';
+}
+
+async function callOpenWorkFolder(workDir) {
+    if (isWails()) return await window.go.main.App.OpenWorkFolder(workDir);
+    return await apiPost('/api/sessions/open-work-folder', { workDir });
+}
+
+async function openWorkFolder() {
+    if (!activeSession) return;
+    const workDir = getActiveWorkDir();
+    if (!workDir) {
+        showToast('No work folder for the active pane', 'error');
+        return;
+    }
+    try {
+        await callOpenWorkFolder(workDir);
+        showToast(`Opened work folder: ${workDir}`, 'success');
+    } catch (e) {
+        console.error('Failed to open work folder:', e);
+        showToast(`Failed to open work folder: ${workDir}`, 'error');
+    }
 }
 
 async function updateGitStatus() {

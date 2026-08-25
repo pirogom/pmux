@@ -12,6 +12,7 @@ import (
 
 	"pmux/pkg/config"
 	"pmux/pkg/git"
+	"pmux/pkg/opendir"
 	"pmux/pkg/profile"
 	"pmux/pkg/server"
 	"pmux/pkg/ssh"
@@ -373,6 +374,11 @@ func (a *App) SelectDirectory() (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// OpenWorkFolder opens the given directory in the OS file manager.
+func (a *App) OpenWorkFolder(workDir string) error {
+	return opendir.Open(workDir)
 }
 
 // GetSSHConfig loads the (DPAPI-encrypted) ssh settings and address book.

@@ -110,6 +110,10 @@ export function KillServer() {
   return window['go']['main']['App']['KillServer']();
 }
 
+export function OpenWorkFolder(arg1) {
+  return window['go']['main']['App']['OpenWorkFolder'](arg1);
+}
+
 export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
 }

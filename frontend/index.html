@@ -311,6 +311,22 @@
             </div>
             <div class="modal-body git-diff-body">
                 <pre id="git-diff-content" class="git-diff-content"></pre>
+                <div id="git-diff-minimap" class="git-diff-minimap">
+                    <div id="git-diff-minimap-viewport" class="git-diff-minimap-viewport"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commit Viewer Modal -->
+    <div id="git-commit-view" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header git-diff-title">
+                <h3 id="git-commit-path" class="git-diff-path"></h3>
+                <button id="btn-close-commit" class="icon-btn" title="Close Commit">✖</button>
+            </div>
+            <div class="modal-body git-diff-body">
+                <pre id="git-commit-content" class="git-diff-content"></pre>
             </div>
         </div>
     </div>

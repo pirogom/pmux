@@ -896,22 +896,30 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
 }
 
 /* Diff viewer modal */
-#git-diff-view {
+#git-diff-view,
+#git-commit-view {
   z-index: 150;
 }
 
-#git-diff-view .modal-content {
+#git-diff-view .modal-content,
+#git-commit-view .modal-content {
   width: min(92vw, 1200px);
   max-width: 92vw;
   height: 80vh;
   max-height: 92vh;
 }
 
-#git-diff-view .git-diff-body {
+#git-diff-view .git-diff-body,
+#git-commit-view .git-diff-body {
   flex: 1;
   min-height: 0;
   padding: 0;
   gap: 0;
+  position: relative;
+}
+
+#git-diff-view .git-diff-body {
+  flex-direction: row;
 }
 
 .git-diff-title {
@@ -945,12 +953,72 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
   color: var(--text-main);
 }
 
-#git-diff-view .git-diff-content {
+#git-diff-view .git-diff-content,
+#git-commit-view .git-diff-content {
   flex: 1;
   min-height: 0;
   max-height: none;
   border: none;
   border-radius: 0;
+  position: relative;
+}
+
+/* Diff minimap (change overview band) */
+.git-diff-minimap {
+  position: relative;
+  width: 14px;
+  flex: 0 0 14px;
+  margin: 8px 8px 8px 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.git-diff-minimap-seg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.git-diff-minimap-seg.is-add {
+  background: #4a7c4a;
+  opacity: 0.85;
+}
+
+.git-diff-minimap-seg.is-del {
+  background: #a05252;
+  opacity: 0.85;
+}
+
+.git-diff-minimap-seg.is-mixed {
+  background: #6d5a9e;
+  opacity: 0.85;
+}
+
+.git-diff-minimap-seg:hover,
+.git-diff-minimap-seg.is-hover {
+  opacity: 1;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.35);
+}
+
+.git-diff-minimap-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 2px;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.git-diff-line.git-diff-hover {
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -1px;
 }
 
 /* Diff syntax highlight */

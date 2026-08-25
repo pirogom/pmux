@@ -33,6 +33,11 @@ const gitOpOutputEl = document.getElementById('git-op-output');
 const gitDiffViewEl = document.getElementById('git-diff-view');
 const gitDiffContentEl = document.getElementById('git-diff-content');
 const gitDiffPathEl = document.getElementById('git-diff-path');
+const gitDiffMinimapEl = document.getElementById('git-diff-minimap');
+const gitDiffMinimapViewportEl = document.getElementById('git-diff-minimap-viewport');
+const gitCommitViewEl = document.getElementById('git-commit-view');
+const gitCommitContentEl = document.getElementById('git-commit-content');
+const gitCommitPathEl = document.getElementById('git-commit-path');
 const gitBranchSelectEl = document.getElementById('git-branch-select');
 
 // Git Panel State
@@ -447,17 +452,38 @@ function setupEventListeners() {
     addClick('btn-git-commit', () => gitCommitAction());
     addClick('btn-git-stage-all', () => gitStageAllAction());
     addClick('btn-close-diff', closeDiffView);
+    addClick('btn-close-commit', closeDiffView);
 
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && gitDiffViewEl && !gitDiffViewEl.classList.contains('hidden')) {
-            closeDiffView();
-        }
+        if (e.key !== 'Escape') return;
+        if (gitDiffViewEl && !gitDiffViewEl.classList.contains('hidden')) closeDiffView();
+        else if (gitCommitViewEl && !gitCommitViewEl.classList.contains('hidden')) closeDiffView();
     });
-    if (gitDiffViewEl) {
-        gitDiffViewEl.addEventListener('click', (e) => {
-            if (e.target === gitDiffViewEl) closeDiffView();
+    [gitDiffViewEl, gitCommitViewEl].forEach(el => {
+        if (!el) return;
+        el.addEventListener('click', (e) => {
+            if (e.target === el) closeDiffView();
+        });
+    });
+
+    if (gitDiffContentEl) {
+        gitDiffContentEl.addEventListener('scroll', updateDiffMinimapViewport);
+    }
+    if (gitDiffMinimapEl) {
+        gitDiffMinimapEl.addEventListener('click', (e) => {
+            if (!gitDiffContentEl) return;
+            const rect = gitDiffMinimapEl.getBoundingClientRect();
+            if (rect.height <= 0) return;
+            const ratio = (e.clientY - rect.top) / rect.height;
+            gitDiffContentEl.scrollTop = Math.max(0, ratio * (gitDiffContentEl.scrollHeight - gitDiffContentEl.clientHeight));
+            updateDiffMinimapViewport();
         });
     }
+    window.addEventListener('resize', () => {
+        if (gitDiffViewEl && gitDiffContentEl && !gitDiffViewEl.classList.contains('hidden')) {
+            buildDiffMinimap(gitDiffContentEl);
+        }
+    });
 
     const gitCommitInputEl = document.getElementById('git-commit-message');
     if (gitCommitInputEl) {
@@ -2603,19 +2629,115 @@ function renderGitDiff(container, text) {
     container.appendChild(frag);
 }
 
+let diffMinimapRegions = [];
+
+function clearDiffMinimap() {
+    diffMinimapRegions = [];
+    if (!gitDiffMinimapEl) return;
+    gitDiffMinimapEl.querySelectorAll('.git-diff-minimap-seg').forEach(s => s.remove());
+    if (gitDiffMinimapViewportEl) {
+        gitDiffMinimapViewportEl.style.top = '0px';
+        gitDiffMinimapViewportEl.style.height = '0px';
+    }
+}
+
+function collectDiffRegions(container) {
+    const regions = [];
+    let current = null;
+    container.querySelectorAll('.git-diff-line').forEach(line => {
+        const isChange = line.classList.contains('git-diff-add') || line.classList.contains('git-diff-del');
+        if (isChange) {
+            if (!current) current = { els: [] };
+            current.els.push(line);
+        } else if (current) {
+            regions.push(current);
+            current = null;
+        }
+    });
+    if (current) regions.push(current);
+    return regions;
+}
+
+function updateDiffMinimapViewport() {
+    if (!gitDiffMinimapEl || !gitDiffMinimapViewportEl || !gitDiffContentEl) return;
+    const container = gitDiffContentEl;
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    const minimapHeight = gitDiffMinimapEl.clientHeight;
+    if (!scrollHeight || !minimapHeight || clientHeight >= scrollHeight) {
+        gitDiffMinimapViewportEl.style.top = '0px';
+        gitDiffMinimapViewportEl.style.height = '0px';
+        return;
+    }
+    const vh = Math.max(10, clientHeight / scrollHeight * minimapHeight);
+    const vtop = container.scrollTop / scrollHeight * minimapHeight;
+    gitDiffMinimapViewportEl.style.top = `${vtop}px`;
+    gitDiffMinimapViewportEl.style.height = `${vh}px`;
+}
+
+function buildDiffMinimap(container) {
+    clearDiffMinimap();
+    if (!gitDiffMinimapEl || !gitDiffMinimapViewportEl || !container) return;
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    const minimapHeight = gitDiffMinimapEl.clientHeight;
+    if (!scrollHeight || !minimapHeight || clientHeight >= scrollHeight) return;
+
+    diffMinimapRegions = collectDiffRegions(container);
+    const scale = minimapHeight / scrollHeight;
+    for (const region of diffMinimapRegions) {
+        const first = region.els[0];
+        const last = region.els[region.els.length - 1];
+        const top = first.offsetTop * scale;
+        const bottom = (last.offsetTop + last.offsetHeight) * scale;
+        const seg = document.createElement('div');
+        seg.className = 'git-diff-minimap-seg';
+        const hasAdd = region.els.some(el => el.classList.contains('git-diff-add'));
+        const hasDel = region.els.some(el => el.classList.contains('git-diff-del'));
+        seg.classList.add(hasAdd && hasDel ? 'is-mixed' : (hasAdd ? 'is-add' : 'is-del'));
+        seg.style.top = `${top}px`;
+        seg.style.height = `${Math.max(2, bottom - top)}px`;
+        seg.title = `${region.els.length} changed line${region.els.length > 1 ? 's' : ''}`;
+        seg.addEventListener('click', (e) => {
+            e.stopPropagation();
+            container.scrollTop = Math.max(0, first.offsetTop - 8);
+            updateDiffMinimapViewport();
+        });
+        seg.addEventListener('mouseenter', () => {
+            seg.classList.add('is-hover');
+            region.els.forEach(el => el.classList.add('git-diff-hover'));
+        });
+        seg.addEventListener('mouseleave', () => {
+            seg.classList.remove('is-hover');
+            region.els.forEach(el => el.classList.remove('git-diff-hover'));
+        });
+        gitDiffMinimapEl.insertBefore(seg, gitDiffMinimapViewportEl);
+    }
+    updateDiffMinimapViewport();
+}
+
+function scrollDiffToFirstChange(container) {
+    const first = container.querySelector('.git-diff-line.git-diff-add, .git-diff-line.git-diff-del');
+    if (first) container.scrollTop = Math.max(0, first.offsetTop - 8);
+}
+
 async function showDiff(workDir, path) {
     if (!gitDiffViewEl || !gitDiffContentEl || !gitDiffPathEl) return;
+    const wasHidden = gitDiffViewEl.classList.contains('hidden');
     selectedDiffPath = path;
     const res = await callGitDiff(workDir, path);
     if (res.error) {
         gitDiffPathEl.textContent = path;
         gitDiffContentEl.textContent = `Error: ${res.error}`;
+        clearDiffMinimap();
     } else if (res.binary) {
         gitDiffPathEl.textContent = path;
         gitDiffContentEl.textContent = '(binary file — diff not available)';
+        clearDiffMinimap();
     } else if (!res.staged && !res.unstaged) {
         gitDiffPathEl.textContent = path;
         gitDiffContentEl.textContent = '(no textual diff — new/untracked file)';
+        clearDiffMinimap();
     } else {
         gitDiffPathEl.textContent = path;
         const parts = [];
@@ -2626,28 +2748,33 @@ async function showDiff(workDir, path) {
             parts.push('=== Unstaged ===\n' + res.unstaged);
         }
         renderGitDiff(gitDiffContentEl, parts.join('\n'));
+        gitDiffViewEl.classList.remove('hidden');
+        buildDiffMinimap(gitDiffContentEl);
+        if (wasHidden) scrollDiffToFirstChange(gitDiffContentEl);
     }
     gitDiffViewEl.classList.remove('hidden');
+    updateDiffMinimapViewport();
 }
 
 async function showCommitDetail(workDir, hash) {
-    if (!gitDiffViewEl || !gitDiffContentEl || !gitDiffPathEl) return;
+    if (!gitCommitViewEl || !gitCommitContentEl || !gitCommitPathEl) return;
     selectedCommitHash = hash;
     selectedDiffPath = null;
     const res = await callGitShow(workDir, hash);
     if (res.error) {
-        gitDiffPathEl.textContent = hash;
-        gitDiffContentEl.textContent = `Error: ${res.error}`;
+        gitCommitPathEl.textContent = hash;
+        gitCommitContentEl.textContent = `Error: ${res.error}`;
     } else {
-        gitDiffPathEl.textContent = `commit ${res.shortHash || hash}`;
+        gitCommitPathEl.textContent = `commit ${res.shortHash || hash}`;
         const header =
             `commit ${res.hash}\n` +
             `Author: ${res.author} <${res.email}>\n` +
             `Date:   ${res.date}\n` +
             `\n    ${res.message.replace(/\n/g, '\n    ')}\n`;
-        renderGitDiff(gitDiffContentEl, header + (res.diff || '(no diff)'));
+        renderGitDiff(gitCommitContentEl, header + (res.diff || '(no diff)'));
     }
-    gitDiffViewEl.classList.remove('hidden');
+    gitCommitViewEl.classList.remove('hidden');
+    gitCommitContentEl.scrollTop = 0;
 }
 
 function closeDiffView() {
@@ -2655,6 +2782,9 @@ function closeDiffView() {
     selectedCommitHash = null;
     if (gitDiffViewEl) gitDiffViewEl.classList.add('hidden');
     if (gitDiffContentEl) gitDiffContentEl.textContent = '';
+    if (gitCommitViewEl) gitCommitViewEl.classList.add('hidden');
+    if (gitCommitContentEl) gitCommitContentEl.textContent = '';
+    clearDiffMinimap();
 }
 
 function showOpOutput(res) {

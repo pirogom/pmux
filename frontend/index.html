@@ -93,10 +93,31 @@
                     <button id="btn-close-git" class="icon-btn" title="Close Panel">✖</button>
                 </div>
             </div>
-            <div id="git-changes-container" class="git-changes-list">
-                <div class="git-empty">No git repository detected in active pane.</div>
+            <div class="git-panel-body">
+                <div class="git-toolbar">
+                    <select id="git-branch-select" class="git-branch-select" title="Switch branch"></select>
+                    <div class="git-op-buttons">
+                        <button id="btn-git-fetch" class="btn btn-sm" title="Fetch from remote">⬇ Fetch</button>
+                        <button id="btn-git-pull" class="btn btn-sm" title="Pull from remote">⤓ Pull</button>
+                        <button id="btn-git-push" class="btn btn-sm" title="Push to remote">⤒ Push</button>
+                    </div>
+                </div>
+                <div class="git-commit-box">
+                    <div class="git-commit-row">
+                        <button id="btn-git-stage-all" class="btn btn-sm" title="Stage all changes">＋ Stage All</button>
+                        <span class="git-commit-hint" id="git-staged-count">0 staged</span>
+                    </div>
+                    <div class="git-commit-row">
+                        <input id="git-commit-message" class="git-commit-input" placeholder="Commit message..." />
+                        <button id="btn-git-commit" class="btn btn-sm btn-primary" title="Commit staged changes">Commit</button>
+                    </div>
+                </div>
+                <div class="git-section-title">Changes <span id="git-changes-count" class="git-section-count"></span></div>
+                <div id="git-changes-container" class="git-changes-list"></div>
+                <div class="git-section-title">History</div>
+                <div id="git-log-container" class="git-log-list"></div>
+                <pre id="git-op-output" class="git-op-output hidden"></pre>
             </div>
-            <div id="git-log-output" class="git-log-output hidden"></div>
             <div class="git-panel-footer">
                 <label for="git-poll-interval-select" class="git-footer-label">Refresh Interval:</label>
                 <select id="git-poll-interval-select" class="git-footer-select">
@@ -277,6 +298,19 @@
             <div class="modal-footer">
                 <button id="btn-cancel-ssh-pass" class="btn btn-secondary">Cancel</button>
                 <button id="btn-ok-ssh-pass" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Diff Viewer Modal -->
+    <div id="git-diff-view" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header git-diff-title">
+                <h3 id="git-diff-path" class="git-diff-path"></h3>
+                <button id="btn-close-diff" class="icon-btn" title="Close Diff">✖</button>
+            </div>
+            <div class="modal-body git-diff-body">
+                <pre id="git-diff-content" class="git-diff-content"></pre>
             </div>
         </div>
     </div>

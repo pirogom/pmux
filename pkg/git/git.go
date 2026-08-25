@@ -1,114 +1,130 @@
+// Package git implements a pure-Go git client backed by go-git (no cgo, no
+// dependency on the system git executable).
 package git
 
 import (
-	"bytes"
-	"os/exec"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
+// ErrNotGitRepo indicates the given directory is not inside a git work tree.
+var ErrNotGitRepo = errors.New("not a git repository")
+
+// GitChange represents a single changed file in the working tree.
 type GitChange struct {
-	Status string `json:"status"` // "M", "A", "D", "??" 등
-	Path   string `json:"path"`
+	Status   string `json:"status"` // e.g. "M", "A", "D", "??", "MM"
+	Staged   bool   `json:"staged"`
+	Unstaged bool   `json:"unstaged"`
+	Path     string `json:"path"`
 }
 
+// GitStatusResult is the result of a repository status inspection.
 type GitStatusResult struct {
 	IsGitRepo bool        `json:"isGitRepo"`
 	Branch    string      `json:"branch"`
+	Root      string      `json:"root,omitempty"`
 	Changes   []GitChange `json:"changes"`
 	Error     string      `json:"error,omitempty"`
 }
 
-func GetStatus(workDir string) GitStatusResult {
-	if workDir == "" {
-		return GitStatusResult{IsGitRepo: false}
-	}
+// GitCommit is a single commit in the repository log.
+type GitCommit struct {
+	Hash      string   `json:"hash"`
+	ShortHash string   `json:"shortHash"`
+	Author    string   `json:"author"`
+	Email     string   `json:"email"`
+	Date      string   `json:"date"`
+	Message   string   `json:"message"`
+	Subject   string   `json:"subject"`
+	Refs      []string `json:"refs,omitempty"`
+	IsHead    bool     `json:"isHead"`
+}
 
-	// 1. Check if git command exists
-	_, err := exec.LookPath("git")
+// GitBranch is a local branch.
+type GitBranch struct {
+	Name     string `json:"name"`
+	Current  bool   `json:"current"`
+	Upstream string `json:"upstream,omitempty"`
+}
+
+// GitRemote is a configured remote.
+type GitRemote struct {
+	Name string   `json:"name"`
+	URLs []string `json:"urls"`
+}
+
+// GitDiffResult contains the staged and unstaged diff for a single path.
+type GitDiffResult struct {
+	Path     string `json:"path"`
+	Staged   string `json:"staged,omitempty"`
+	Unstaged string `json:"unstaged,omitempty"`
+	Binary   bool   `json:"binary"`
+	Error    string `json:"error,omitempty"`
+}
+
+// GitOpResult is the generic result of a git operation (stage, commit, push...).
+type GitOpResult struct {
+	Success bool   `json:"success"`
+	Output  string `json:"output"`
+	Error   string `json:"error,omitempty"`
+	Auth    string `json:"auth,omitempty"`
+}
+
+// repoBundle bundles an opened repository with its worktree and root path.
+type repoBundle struct {
+	repo     *gogit.Repository
+	worktree *gogit.Worktree
+	root     string
+}
+
+// openRepo opens the repository containing workDir, searching upwards, and
+// returns the bundle with the worktree root.
+func openRepo(workDir string) (*repoBundle, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return nil, ErrNotGitRepo
+	}
+	repo, err := gogit.PlainOpenWithOptions(workDir, &gogit.PlainOpenOptions{
+		DetectDotGit:          true,
+		EnableDotGitCommonDir: true,
+	})
 	if err != nil {
-		return GitStatusResult{IsGitRepo: false, Error: "git command not found"}
-	}
-
-	// 2. Check branch
-	cmdBranch := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	prepareCommand(cmdBranch)
-	cmdBranch.Dir = workDir
-	var outBranch bytes.Buffer
-	cmdBranch.Stdout = &outBranch
-	if err := cmdBranch.Run(); err != nil {
-		return GitStatusResult{IsGitRepo: false}
-	}
-	branch := strings.TrimSpace(outBranch.String())
-
-	// 3. git status --porcelain
-	cmdStatus := exec.Command("git", "status", "--porcelain")
-	prepareCommand(cmdStatus)
-	cmdStatus.Dir = workDir
-	var outStatus bytes.Buffer
-	cmdStatus.Stdout = &outStatus
-	if err := cmdStatus.Run(); err != nil {
-		return GitStatusResult{IsGitRepo: true, Branch: branch}
-	}
-
-	var changes []GitChange
-	lines := strings.Split(outStatus.String(), "\n")
-	for _, line := range lines {
-		if len(line) < 3 {
-			continue
+		if errors.Is(err, gogit.ErrRepositoryNotExists) {
+			return nil, ErrNotGitRepo
 		}
-		status := strings.TrimSpace(line[:2])
-		filePath := strings.TrimSpace(line[3:])
-		changes = append(changes, GitChange{
-			Status: status,
-			Path:   filePath,
-		})
+		return nil, fmt.Errorf("failed to open repository: %w", err)
 	}
-
-	return GitStatusResult{
-		IsGitRepo: true,
-		Branch:    branch,
-		Changes:   changes,
-	}
-}
-
-func Push(workDir string) string {
-	cmd := exec.Command("git", "push")
-	prepareCommand(cmd)
-	cmd.Dir = workDir
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
+	wt, err := repo.Worktree()
 	if err != nil {
-		return "Error: " + err.Error() + "\n" + out.String()
+		return nil, fmt.Errorf("failed to open worktree: %w", err)
 	}
-	return out.String()
+	root := filepath.Clean(wt.Filesystem.Root())
+	return &repoBundle{repo: repo, worktree: wt, root: root}, nil
 }
 
-func Pull(workDir string) string {
-	cmd := exec.Command("git", "pull")
-	prepareCommand(cmd)
-	cmd.Dir = workDir
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	if err != nil {
-		return "Error: " + err.Error() + "\n" + out.String()
+// currentBranch resolves the branch HEAD points to, handling detached HEAD and
+// unborn branches (empty repositories).
+func currentBranch(repo *gogit.Repository) string {
+	head, err := repo.Head()
+	if err == nil {
+		if head.Name().IsBranch() {
+			return head.Name().Short()
+		}
+		hash := head.Hash().String()
+		if len(hash) > 7 {
+			hash = hash[:7]
+		}
+		return hash + " (detached)"
 	}
-	return out.String()
-}
-
-func GetRepoRoot(workDir string) string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	prepareCommand(cmd)
-	cmd.Dir = workDir
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return workDir
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		if sym, serr := repo.Reference(plumbing.HEAD, false); serr == nil && sym.Type() == plumbing.SymbolicReference {
+			return sym.Target().Short() + " (no commits)"
+		}
+		return "(no commits)"
 	}
-	root := strings.TrimSpace(out.String())
-	return filepath.Clean(root)
+	return ""
 }

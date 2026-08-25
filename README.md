@@ -18,7 +18,7 @@
 - **ConPTY Resiliency & TUI Stability**: Uses `coder/websocket` with asynchronous ConPTY resize execution and a 32KB OutPipe buffer, preventing UI freezes during continuous window resizes or running complex TUI applications (Vim, Htop, Neovim, Lazygit, Gitui, etc.).
 - **Pane Auto-Reconnect**: Automatically retries WebSocket connections up to 3 times (with a 1-second delay) upon unexpected connection drops, displaying Toast notifications for connection statuses.
 - **Collapsible Accordion Sidebar UI**: Collapse or expand the **ACTIVE SESSIONS** and **PROFILES** sidebar sections with persistent `localStorage` states. When PROFILES is collapsed, the ACTIVE SESSIONS list dynamically expands to utilize all remaining vertical space.
-- **Integrated Git Dashboard & Uncommitted File Tracker**: Detects the current working directory of the active terminal pane to quickly highlight uncommitted files and repository branch status.
+- **Integrated Git Dashboard (pure Go, no system git required)**: Detects the working directory of the active terminal pane and shows branch status, uncommitted files (with staging state), and commit history — with staging/unstaging, commits, Fetch/Pull/Push, branch switching, and per-file diff previews.
 - **SSH Address Book & Quick Connect**: A per-pane extension toolbar (visible while holding `Ctrl`) provides one-click SSH connections through your configured SSH client. The encrypted address book (stored in `~/.pmux/ssh.conf`) supports password-protected Export/Import for migrating data between machines.
 
 ---
@@ -27,10 +27,10 @@
 
 > [!NOTE]
 > **Git Prerequisites & Purpose**
-> - The Git integration requires the `git` executable to be installed and available in your system's `PATH`.
-> - **pmux** was originally created to optimize workflows when working alongside **AI Coding Agents** (such as Gemini/Antigravity, Claude, etc.).
-> - The built-in Git sidebar is designed primarily to give you a quick visual overview of **uncommitted/staged files** in your current working directory.
-> - For actual repository management (committing, pushing, branching, rebasing): Feel free to **command your AI Agent to handle git operations**, or run powerful TUI Git clients directly inside a split terminal pane—such as [`gitui`](https://github.com/extrawurst/gitui) or [`lazygit`](https://github.com/jesseduffield/lazygit).
+> - The built-in Git integration is **pure Go ([go-git](https://github.com/go-git/go-git)) based** — no system `git` executable is required.
+> - The Git sidebar supports **change inspection, staging/unstaging, commits, Fetch/Pull/Push, commit history, branch switching, and per-file diff previews**.
+> - push/pull reuses credentials already present on your system: **SSH remotes** use the OpenSSH Authentication Agent or `~/.ssh` keys (with `known_hosts` verification); **HTTPS remotes** use Windows Credential Manager (Git Credential Manager) or a `~/.git-credentials` file. When no credentials are found, the panel explains how to fix it.
+> - Known limitation: submodule change detection and Git LFS support are limited in go-git.
 
 ---
 

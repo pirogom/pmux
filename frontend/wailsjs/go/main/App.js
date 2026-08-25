@@ -30,6 +30,26 @@ export function GetDetectedProfiles() {
   return window['go']['main']['App']['GetDetectedProfiles']();
 }
 
+export function GetGitBranches(arg1) {
+  return window['go']['main']['App']['GetGitBranches'](arg1);
+}
+
+export function GetGitCommitDetail(arg1, arg2) {
+  return window['go']['main']['App']['GetGitCommitDetail'](arg1, arg2);
+}
+
+export function GetGitDiff(arg1, arg2) {
+  return window['go']['main']['App']['GetGitDiff'](arg1, arg2);
+}
+
+export function GetGitLog(arg1, arg2) {
+  return window['go']['main']['App']['GetGitLog'](arg1, arg2);
+}
+
+export function GetGitRemotes(arg1) {
+  return window['go']['main']['App']['GetGitRemotes'](arg1);
+}
+
 export function GetGitStatus(arg1) {
   return window['go']['main']['App']['GetGitStatus'](arg1);
 }
@@ -50,12 +70,36 @@ export function GetSessions() {
   return window['go']['main']['App']['GetSessions']();
 }
 
+export function GitCheckout(arg1, arg2) {
+  return window['go']['main']['App']['GitCheckout'](arg1, arg2);
+}
+
+export function GitCommit(arg1, arg2) {
+  return window['go']['main']['App']['GitCommit'](arg1, arg2);
+}
+
+export function GitFetch(arg1) {
+  return window['go']['main']['App']['GitFetch'](arg1);
+}
+
 export function GitPull(arg1) {
   return window['go']['main']['App']['GitPull'](arg1);
 }
 
 export function GitPush(arg1) {
   return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function GitStage(arg1, arg2) {
+  return window['go']['main']['App']['GitStage'](arg1, arg2);
+}
+
+export function GitStageAll(arg1) {
+  return window['go']['main']['App']['GitStageAll'](arg1);
+}
+
+export function GitUnstage(arg1, arg2) {
+  return window['go']['main']['App']['GitUnstage'](arg1, arg2);
 }
 
 export function ImportSSH(arg1) {

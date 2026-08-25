@@ -114,8 +114,19 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
 	mux.HandleFunc("/api/profiles/notify-change", s.handleProfilesNotifyChange)
 	mux.HandleFunc("/api/git/status", s.handleGitStatus)
+	mux.HandleFunc("/api/git/log", s.handleGitLog)
+	mux.HandleFunc("/api/git/diff", s.handleGitDiff)
+	mux.HandleFunc("/api/git/show", s.handleGitShow)
+	mux.HandleFunc("/api/git/branches", s.handleGitBranches)
+	mux.HandleFunc("/api/git/remotes", s.handleGitRemotes)
 	mux.HandleFunc("/api/git/push", s.handleGitPush)
 	mux.HandleFunc("/api/git/pull", s.handleGitPull)
+	mux.HandleFunc("/api/git/fetch", s.handleGitFetch)
+	mux.HandleFunc("/api/git/commit", s.handleGitCommit)
+	mux.HandleFunc("/api/git/stage", s.handleGitStage)
+	mux.HandleFunc("/api/git/unstage", s.handleGitUnstage)
+	mux.HandleFunc("/api/git/stage-all", s.handleGitStageAll)
+	mux.HandleFunc("/api/git/checkout", s.handleGitCheckout)
 	mux.HandleFunc("/api/ssh/config", s.handleSSHConfig)
 	mux.HandleFunc("/api/ssh/export", s.handleSSHExport)
 	mux.HandleFunc("/api/ssh/import", s.handleSSHImport)
@@ -410,6 +421,61 @@ func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(res)
 }
 
+func (s *Server) handleGitLog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := r.URL.Query().Get("dir")
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	commits, err := git.GetLog(dir, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(commits)
+}
+
+func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := r.URL.Query().Get("dir")
+	path := r.URL.Query().Get("path")
+	res := git.GetDiff(dir, path)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitShow(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := r.URL.Query().Get("dir")
+	hash := r.URL.Query().Get("hash")
+	res := git.GetCommitDetail(dir, hash)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitBranches(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := r.URL.Query().Get("dir")
+	branches, err := git.GetBranches(dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(branches)
+}
+
+func (s *Server) handleGitRemotes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	dir := r.URL.Query().Get("dir")
+	remotes, err := git.GetRemotes(dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(remotes)
+}
+
 func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var req struct {
@@ -420,7 +486,7 @@ func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := git.Push(req.WorkDir)
-	_ = json.NewEncoder(w).Encode(map[string]string{"output": res})
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 func (s *Server) handleGitPull(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +499,89 @@ func (s *Server) handleGitPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := git.Pull(req.WorkDir)
-	_ = json.NewEncoder(w).Encode(map[string]string{"output": res})
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitFetch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string `json:"workDir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.Fetch(req.WorkDir)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string `json:"workDir"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.Commit(req.WorkDir, req.Message)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitStage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string   `json:"workDir"`
+		Paths   []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.Stage(req.WorkDir, req.Paths)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitUnstage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string   `json:"workDir"`
+		Paths   []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.Unstage(req.WorkDir, req.Paths)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitStageAll(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string `json:"workDir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.StageAll(req.WorkDir)
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitCheckout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		WorkDir string `json:"workDir"`
+		Branch  string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := git.Checkout(req.WorkDir, req.Branch)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // handleSSHConfig loads (GET) or saves (POST) the global ssh config,

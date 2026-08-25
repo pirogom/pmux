@@ -26,7 +26,18 @@ const emptyStateEl = document.getElementById('empty-state');
 const gitPanelEl = document.getElementById('git-panel');
 const gitBranchBadgeEl = document.getElementById('git-branch-badge');
 const gitChangesContainerEl = document.getElementById('git-changes-container');
-const gitLogOutputEl = document.getElementById('git-log-output');
+const gitChangesCountEl = document.getElementById('git-changes-count');
+const gitStagedCountEl = document.getElementById('git-staged-count');
+const gitLogContainerEl = document.getElementById('git-log-container');
+const gitOpOutputEl = document.getElementById('git-op-output');
+const gitDiffViewEl = document.getElementById('git-diff-view');
+const gitDiffContentEl = document.getElementById('git-diff-content');
+const gitDiffPathEl = document.getElementById('git-diff-path');
+const gitBranchSelectEl = document.getElementById('git-branch-select');
+
+// Git Panel State
+let selectedDiffPath = null;
+let selectedCommitHash = null;
 
 const profileModalEl = document.getElementById('profile-modal');
 const profNameInput = document.getElementById('prof-name');
@@ -414,6 +425,48 @@ function setupEventListeners() {
     });
 
     addClick('btn-git-refresh', updateGitStatus);
+
+    // Git panel actions
+    addClick('btn-git-fetch', () => gitRemoteAction('fetch'));
+    addClick('btn-git-pull', () => gitRemoteAction('pull'));
+    addClick('btn-git-push', () => gitRemoteAction('push'));
+    addClick('btn-git-commit', () => gitCommitAction());
+    addClick('btn-git-stage-all', () => gitStageAllAction());
+    addClick('btn-close-diff', closeDiffView);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && gitDiffViewEl && !gitDiffViewEl.classList.contains('hidden')) {
+            closeDiffView();
+        }
+    });
+    if (gitDiffViewEl) {
+        gitDiffViewEl.addEventListener('click', (e) => {
+            if (e.target === gitDiffViewEl) closeDiffView();
+        });
+    }
+
+    const gitCommitInputEl = document.getElementById('git-commit-message');
+    if (gitCommitInputEl) {
+        gitCommitInputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                gitCommitAction();
+            }
+        });
+    }
+
+    const gitBranchSelectEl = document.getElementById('git-branch-select');
+    if (gitBranchSelectEl) {
+        gitBranchSelectEl.addEventListener('change', async (e) => {
+            const branch = e.target.value;
+            const workDir = getActiveWorkDir();
+            if (!workDir || !branch) return;
+            const res = await callGitCheckout(workDir, branch);
+            showOpOutput(res);
+            await updateGitStatus();
+        });
+    }
+
     initGitPanelResizer();
 
     const pollSelectEl = document.getElementById('git-poll-interval-select');
@@ -2115,7 +2168,7 @@ function initGitPanelResizer() {    const resizer = document.getElementById('git
     document.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
         const newWidth = window.innerWidth - e.clientX;
-        if (newWidth >= 250 && newWidth <= 800) {
+        if (newWidth >= 250 && newWidth <= 1000) {
             gitPanelEl.style.width = `${newWidth}px`;
         }
     });
@@ -2141,27 +2194,35 @@ function updateGitButtonBadge(count) {
     }
 }
 
+function getActiveWorkDir() {
+    if (!activePaneId) return '';
+    const paneInfo = activePanesMap.get(activePaneId);
+    return paneInfo ? paneInfo.workDir : '';
+}
+
 async function updateGitStatus() {
-    if (!activePaneId) {
+    const workDir = getActiveWorkDir();
+    if (!workDir) {
         updateGitButtonBadge(0);
+        if (!gitPanelEl.classList.contains('hidden')) {
+            renderGitEmpty('No active pane.');
+        }
         return;
     }
 
-    const paneInfo = activePanesMap.get(activePaneId);
-    const workDir = paneInfo ? paneInfo.workDir : '';
-
     let res = null;
-    if (window.go && window.go.main && window.go.main.App) {
-        res = await window.go.main.App.GetGitStatus(workDir);
-    } else {
-        res = await apiGet(`/api/git/status?dir=${encodeURIComponent(workDir)}`);
+    try {
+        res = await callGitStatus(workDir);
+    } catch (e) {
+        console.error('git status failed:', e);
+        updateGitButtonBadge(0);
+        return;
     }
 
     if (!res || !res.isGitRepo) {
         updateGitButtonBadge(0);
         if (!gitPanelEl.classList.contains('hidden')) {
-            gitBranchBadgeEl.textContent = 'Not a git repo';
-            gitChangesContainerEl.innerHTML = '<div class="git-empty">No git repository detected in active pane.</div>';
+            renderGitEmpty('No git repository detected in active pane.');
         }
         return;
     }
@@ -2172,17 +2233,173 @@ async function updateGitStatus() {
     if (gitPanelEl.classList.contains('hidden')) return;
 
     gitBranchBadgeEl.textContent = res.branch || 'main';
+    gitBranchBadgeEl.title = res.root || '';
+
+    const stagedCount = res.changes ? res.changes.filter(ch => ch.staged).length : 0;
+    if (gitStagedCountEl) gitStagedCountEl.textContent = `${stagedCount} staged`;
+    if (gitChangesCountEl) gitChangesCountEl.textContent = `${changeCount}`;
+
+    renderGitChanges(workDir, res.changes);
+
+    // Refresh the diff preview for the currently selected file, if it still
+    // shows up in the status.
+    if (selectedDiffPath) {
+        const stillThere = res.changes && res.changes.some(ch => ch.path === selectedDiffPath);
+        if (stillThere) {
+            showDiff(workDir, selectedDiffPath);
+        } else {
+            closeDiffView();
+        }
+    }
+
+    renderGitBranches(workDir, res.branch);
+    renderGitLog(workDir);
+}
+
+function renderGitEmpty(msg) {
+    gitBranchBadgeEl.textContent = 'Not a git repo';
+    gitChangesContainerEl.innerHTML = `<div class="git-empty">${msg}</div>`;
+    if (gitLogContainerEl) gitLogContainerEl.innerHTML = '';
+    if (gitStagedCountEl) gitStagedCountEl.textContent = '';
+    if (gitChangesCountEl) gitChangesCountEl.textContent = '';
+}
+
+// --- Git API calls (Wails bindings with HTTP API fallback) ---
+
+function isWails() {
+    return !!(window.go && window.go.main && window.go.main.App);
+}
+
+async function callGitStatus(workDir) {
+    if (isWails()) return await window.go.main.App.GetGitStatus(workDir);
+    return await apiGet(`/api/git/status?dir=${encodeURIComponent(workDir)}`);
+}
+
+async function callGitPush(workDir) {
+    if (isWails()) return await window.go.main.App.GitPush(workDir);
+    return await apiPost('/api/git/push', { workDir });
+}
+
+async function callGitPull(workDir) {
+    if (isWails()) return await window.go.main.App.GitPull(workDir);
+    return await apiPost('/api/git/pull', { workDir });
+}
+
+async function callGitFetch(workDir) {
+    if (isWails()) return await window.go.main.App.GitFetch(workDir);
+    return await apiPost('/api/git/fetch', { workDir });
+}
+
+async function callGitCommit(workDir, message) {
+    if (isWails()) return await window.go.main.App.GitCommit(workDir, message);
+    return await apiPost('/api/git/commit', { workDir, message });
+}
+
+async function callGitStageAll(workDir) {
+    if (isWails()) return await window.go.main.App.GitStageAll(workDir);
+    return await apiPost('/api/git/stage-all', { workDir });
+}
+
+async function callGitStagePaths(workDir, paths) {
+    if (isWails()) return await window.go.main.App.GitStage(workDir, paths);
+    return await apiPost('/api/git/stage', { workDir, paths });
+}
+
+async function callGitUnstagePaths(workDir, paths) {
+    if (isWails()) return await window.go.main.App.GitUnstage(workDir, paths);
+    return await apiPost('/api/git/unstage', { workDir, paths });
+}
+
+async function callGitCheckout(workDir, branch) {
+    if (isWails()) return await window.go.main.App.GitCheckout(workDir, branch);
+    return await apiPost('/api/git/checkout', { workDir, branch });
+}
+
+async function callGitLog(workDir) {
+    if (isWails()) return await window.go.main.App.GetGitLog(workDir, 30);
+    return await apiGet(`/api/git/log?dir=${encodeURIComponent(workDir)}&limit=30`);
+}
+
+async function callGitBranches(workDir) {
+    if (isWails()) return await window.go.main.App.GetGitBranches(workDir);
+    return await apiGet(`/api/git/branches?dir=${encodeURIComponent(workDir)}`);
+}
+
+async function callGitDiff(workDir, path) {
+    if (isWails()) return await window.go.main.App.GetGitDiff(workDir, path);
+    return await apiGet(`/api/git/diff?dir=${encodeURIComponent(workDir)}&path=${encodeURIComponent(path)}`);
+}
+
+async function callGitShow(workDir, hash) {
+    if (isWails()) return await window.go.main.App.GetGitCommitDetail(workDir, hash);
+    return await apiGet(`/api/git/show?dir=${encodeURIComponent(workDir)}&hash=${encodeURIComponent(hash)}`);
+}
+
+// --- Git actions ---
+
+async function gitRemoteAction(action) {
+    const workDir = getActiveWorkDir();
+    if (!workDir) return;
+    const name = { fetch: 'Fetch', pull: 'Pull', push: 'Push' }[action];
+    if (!name) return;
+    let res;
+    try {
+        if (action === 'fetch') res = await callGitFetch(workDir);
+        else if (action === 'pull') res = await callGitPull(workDir);
+        else res = await callGitPush(workDir);
+    } catch (e) {
+        showOpOutput({ success: false, error: `${name} failed: ${e}` });
+        return;
+    }
+    showOpOutput(res);
+    await updateGitStatus();
+}
+
+async function gitCommitAction() {
+    const workDir = getActiveWorkDir();
+    if (!workDir) return;
+    const inputEl = document.getElementById('git-commit-message');
+    const message = inputEl ? inputEl.value.trim() : '';
+    if (!message) {
+        showToast('Enter a commit message first', 'warning');
+        if (inputEl) inputEl.focus();
+        return;
+    }
+    const res = await callGitCommit(workDir, message);
+    showOpOutput(res);
+    if (inputEl) inputEl.value = '';
+    await updateGitStatus();
+}
+
+async function gitStageAllAction() {
+    const workDir = getActiveWorkDir();
+    if (!workDir) return;
+    const res = await callGitStageAll(workDir);
+    showOpOutput(res);
+    await updateGitStatus();
+}
+
+async function gitStagePath(workDir, path, staged) {
+    const res = staged
+        ? await callGitUnstagePaths(workDir, [path])
+        : await callGitStagePaths(workDir, [path]);
+    showOpOutput(res);
+    await updateGitStatus();
+}
+
+// --- Rendering ---
+
+function renderGitChanges(workDir, changes) {
     gitChangesContainerEl.innerHTML = '';
 
-    if (!res.changes || res.changes.length === 0) {
+    if (!changes || changes.length === 0) {
         gitChangesContainerEl.innerHTML = '<div class="git-empty">Working tree clean</div>';
         return;
     }
 
     // Group changes by directory (excluding filename)
     const groups = {};
-
-    res.changes.forEach(ch => {
+    changes.forEach(ch => {
         const lastSlash = ch.path.lastIndexOf('/');
         let dir = '.';
         let filename = ch.path;
@@ -2190,15 +2407,10 @@ async function updateGitStatus() {
             dir = ch.path.substring(0, lastSlash);
             filename = ch.path.substring(lastSlash + 1);
         }
-
         if (!groups[dir]) {
             groups[dir] = [];
         }
-        groups[dir].push({
-            status: ch.status,
-            filename: filename,
-            fullPath: ch.path
-        });
+        groups[dir].push(ch);
     });
 
     Object.keys(groups).sort().forEach(dir => {
@@ -2207,21 +2419,231 @@ async function updateGitStatus() {
 
         const header = document.createElement('div');
         header.className = 'git-group-header';
-        header.innerHTML = `📂 <span class="git-group-dir">${dir}</span>`;
+        const headerLabel = document.createElement('span');
+        headerLabel.textContent = '📂 ';
+        const dirEl = document.createElement('span');
+        dirEl.className = 'git-group-dir';
+        dirEl.textContent = dir;
+        header.appendChild(headerLabel);
+        header.appendChild(dirEl);
         groupEl.appendChild(header);
 
         const itemsBox = document.createElement('div');
         itemsBox.className = 'git-group-items';
 
-        groups[dir].forEach(item => {
+        groups[dir].forEach(ch => {
             const itemEl = document.createElement('div');
-            itemEl.className = 'git-file-item';
-            itemEl.title = item.fullPath;
-            itemEl.innerHTML = `<span class="status-tag ${item.status}">${item.status}</span> <span class="git-file-name">${item.filename}</span>`;
+            itemEl.className = 'git-file-item' + (ch.staged ? ' staged' : '');
+            itemEl.title = ch.path;
+
+            const tag = document.createElement('span');
+            tag.className = `status-tag ${ch.status}`;
+            tag.textContent = ch.status;
+            itemEl.appendChild(tag);
+
+            const nameEl = document.createElement('span');
+            nameEl.className = 'git-file-name';
+            const lastSlash = ch.path.lastIndexOf('/');
+            nameEl.textContent = lastSlash !== -1 ? ch.path.substring(lastSlash + 1) : ch.path;
+            nameEl.title = `View diff: ${ch.path}`;
+            nameEl.addEventListener('click', () => showDiff(workDir, ch.path));
+            itemEl.appendChild(nameEl);
+
+            const diffBtn = document.createElement('button');
+            diffBtn.className = 'git-file-btn';
+            diffBtn.textContent = '⤢';
+            diffBtn.title = 'View diff';
+            diffBtn.addEventListener('click', () => showDiff(workDir, ch.path));
+            itemEl.appendChild(diffBtn);
+
+            const stageBtn = document.createElement('button');
+            stageBtn.className = 'git-file-btn' + (ch.staged ? ' stage-on' : '');
+            stageBtn.textContent = ch.staged ? '−' : '＋';
+            stageBtn.title = ch.staged ? 'Unstage' : 'Stage';
+            stageBtn.addEventListener('click', () => gitStagePath(workDir, ch.path, ch.staged));
+            itemEl.appendChild(stageBtn);
+
             itemsBox.appendChild(itemEl);
         });
 
         groupEl.appendChild(itemsBox);
         gitChangesContainerEl.appendChild(groupEl);
     });
+}
+
+async function renderGitBranches(workDir, currentBranch) {
+    if (!gitBranchSelectEl) return;
+    // Don't clobber the dropdown while the user is interacting with it.
+    if (document.activeElement === gitBranchSelectEl) return;
+
+    let branches = [];
+    try {
+        branches = await callGitBranches(workDir);
+    } catch (e) {
+        return;
+    }
+    if (!Array.isArray(branches)) return;
+
+    const selected = currentBranch || gitBranchSelectEl.value;
+    gitBranchSelectEl.innerHTML = '';
+    branches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.name;
+        opt.textContent = b.name + (b.current ? ' *' : '');
+        if (b.name === selected) opt.selected = true;
+        gitBranchSelectEl.appendChild(opt);
+    });
+    if (branches.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(no branches)';
+        gitBranchSelectEl.appendChild(opt);
+    }
+}
+
+async function renderGitLog(workDir) {
+    if (!gitLogContainerEl) return;
+    let commits = [];
+    try {
+        commits = await callGitLog(workDir);
+    } catch (e) {
+        return;
+    }
+    if (!Array.isArray(commits)) return;
+
+    gitLogContainerEl.innerHTML = '';
+    if (commits.length === 0) {
+        gitLogContainerEl.innerHTML = '<div class="git-empty">No commits yet.</div>';
+        return;
+    }
+
+    commits.forEach(c => {
+        const itemEl = document.createElement('div');
+        itemEl.className = 'git-log-item' + (c.isHead ? ' is-head' : '');
+
+        const top = document.createElement('div');
+        top.className = 'git-log-top';
+
+        const hashEl = document.createElement('span');
+        hashEl.className = 'git-log-hash';
+        hashEl.textContent = c.shortHash;
+        hashEl.title = `View commit detail: ${c.hash}`;
+        hashEl.addEventListener('click', () => showCommitDetail(workDir, c.hash));
+        top.appendChild(hashEl);
+
+        if (c.refs && c.refs.length > 0) {
+            const refsEl = document.createElement('span');
+            refsEl.className = 'git-log-refs';
+            refsEl.textContent = c.refs.join(', ');
+            top.appendChild(refsEl);
+        }
+        itemEl.appendChild(top);
+
+        const msgEl = document.createElement('div');
+        msgEl.className = 'git-log-msg';
+        msgEl.textContent = c.subject;
+        itemEl.appendChild(msgEl);
+
+        const metaEl = document.createElement('div');
+        metaEl.className = 'git-log-meta';
+        metaEl.textContent = `${c.author} · ${c.date}`;
+        itemEl.appendChild(metaEl);
+
+        gitLogContainerEl.appendChild(itemEl);
+    });
+}
+
+function renderGitDiff(container, text) {
+    container.textContent = '';
+    if (!text) return;
+    const lines = text.split('\n');
+    const frag = document.createDocumentFragment();
+    for (const line of lines) {
+        const span = document.createElement('span');
+        span.textContent = line;
+        span.className = 'git-diff-line';
+        if (/^@@ /.test(line)) {
+            span.classList.add('git-diff-hunk');
+        } else if (/^(diff |index |similarity |new file mode |deleted file mode |old mode |new mode |rename |copy |Binary files |\\)/.test(line)) {
+            span.classList.add('git-diff-meta');
+        } else if (/^--- /.test(line) || /^\+\+\+ /.test(line)) {
+            span.classList.add('git-diff-meta');
+        } else if (/^\+/.test(line)) {
+            span.classList.add('git-diff-add');
+        } else if (/^-/.test(line)) {
+            span.classList.add('git-diff-del');
+        } else if (/^=== /.test(line)) {
+            span.classList.add('git-diff-sep');
+        }
+        frag.appendChild(span);
+    }
+    container.appendChild(frag);
+}
+
+async function showDiff(workDir, path) {
+    if (!gitDiffViewEl || !gitDiffContentEl || !gitDiffPathEl) return;
+    selectedDiffPath = path;
+    const res = await callGitDiff(workDir, path);
+    if (res.error) {
+        gitDiffPathEl.textContent = path;
+        gitDiffContentEl.textContent = `Error: ${res.error}`;
+    } else if (res.binary) {
+        gitDiffPathEl.textContent = path;
+        gitDiffContentEl.textContent = '(binary file — diff not available)';
+    } else if (!res.staged && !res.unstaged) {
+        gitDiffPathEl.textContent = path;
+        gitDiffContentEl.textContent = '(no textual diff — new/untracked file)';
+    } else {
+        gitDiffPathEl.textContent = path;
+        const parts = [];
+        if (res.staged) {
+            parts.push('=== Staged ===\n' + res.staged);
+        }
+        if (res.unstaged) {
+            parts.push('=== Unstaged ===\n' + res.unstaged);
+        }
+        renderGitDiff(gitDiffContentEl, parts.join('\n'));
+    }
+    gitDiffViewEl.classList.remove('hidden');
+}
+
+async function showCommitDetail(workDir, hash) {
+    if (!gitDiffViewEl || !gitDiffContentEl || !gitDiffPathEl) return;
+    selectedCommitHash = hash;
+    selectedDiffPath = null;
+    const res = await callGitShow(workDir, hash);
+    if (res.error) {
+        gitDiffPathEl.textContent = hash;
+        gitDiffContentEl.textContent = `Error: ${res.error}`;
+    } else {
+        gitDiffPathEl.textContent = `commit ${res.shortHash || hash}`;
+        const header =
+            `commit ${res.hash}\n` +
+            `Author: ${res.author} <${res.email}>\n` +
+            `Date:   ${res.date}\n` +
+            `\n    ${res.message.replace(/\n/g, '\n    ')}\n`;
+        renderGitDiff(gitDiffContentEl, header + (res.diff || '(no diff)'));
+    }
+    gitDiffViewEl.classList.remove('hidden');
+}
+
+function closeDiffView() {
+    selectedDiffPath = null;
+    selectedCommitHash = null;
+    if (gitDiffViewEl) gitDiffViewEl.classList.add('hidden');
+    if (gitDiffContentEl) gitDiffContentEl.textContent = '';
+}
+
+function showOpOutput(res) {
+    if (!gitOpOutputEl) return;
+    if (!res) return;
+    gitOpOutputEl.classList.remove('hidden');
+    if (res.success) {
+        gitOpOutputEl.className = 'git-op-output success';
+        gitOpOutputEl.textContent = res.output || 'Done.';
+    } else {
+        gitOpOutputEl.className = 'git-op-output error';
+        gitOpOutputEl.textContent = res.error || res.output || 'Operation failed.';
+    }
+    gitOpOutputEl.scrollTop = gitOpOutputEl.scrollHeight;
 }

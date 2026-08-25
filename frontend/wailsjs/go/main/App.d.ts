@@ -19,6 +19,16 @@ export function GetConfig():Promise<config.Config>;
 
 export function GetDetectedProfiles():Promise<Array<config.Profile>>;
 
+export function GetGitBranches(arg1:string):Promise<Array<git.GitBranch>>;
+
+export function GetGitCommitDetail(arg1:string,arg2:string):Promise<git.GitCommitDetail>;
+
+export function GetGitDiff(arg1:string,arg2:string):Promise<git.GitDiffResult>;
+
+export function GetGitLog(arg1:string,arg2:number):Promise<Array<git.GitCommit>>;
+
+export function GetGitRemotes(arg1:string):Promise<Array<git.GitRemote>>;
+
 export function GetGitStatus(arg1:string):Promise<git.GitStatusResult>;
 
 export function GetProfiles():Promise<Array<config.Profile>>;
@@ -29,9 +39,21 @@ export function GetServerPort():Promise<number>;
 
 export function GetSessions():Promise<Array<any>>;
 
-export function GitPull(arg1:string):Promise<string>;
+export function GitCheckout(arg1:string,arg2:string):Promise<git.GitOpResult>;
 
-export function GitPush(arg1:string):Promise<string>;
+export function GitCommit(arg1:string,arg2:string):Promise<git.GitOpResult>;
+
+export function GitFetch(arg1:string):Promise<git.GitOpResult>;
+
+export function GitPull(arg1:string):Promise<git.GitOpResult>;
+
+export function GitPush(arg1:string):Promise<git.GitOpResult>;
+
+export function GitStage(arg1:string,arg2:Array<string>):Promise<git.GitOpResult>;
+
+export function GitStageAll(arg1:string):Promise<git.GitOpResult>;
+
+export function GitUnstage(arg1:string,arg2:Array<string>):Promise<git.GitOpResult>;
 
 export function ImportSSH(arg1:string):Promise<void>;
 

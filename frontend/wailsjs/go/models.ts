@@ -130,8 +130,26 @@ export namespace config {
 
 export namespace git {
 	
+	export class GitBranch {
+	    name: string;
+	    current: boolean;
+	    upstream?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitBranch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.current = source["current"];
+	        this.upstream = source["upstream"];
+	    }
+	}
 	export class GitChange {
 	    status: string;
+	    staged: boolean;
+	    unstaged: boolean;
 	    path: string;
 	
 	    static createFrom(source: any = {}) {
@@ -141,12 +159,125 @@ export namespace git {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.status = source["status"];
+	        this.staged = source["staged"];
+	        this.unstaged = source["unstaged"];
 	        this.path = source["path"];
+	    }
+	}
+	export class GitCommit {
+	    hash: string;
+	    shortHash: string;
+	    author: string;
+	    email: string;
+	    date: string;
+	    message: string;
+	    subject: string;
+	    refs?: string[];
+	    isHead: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitCommit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hash = source["hash"];
+	        this.shortHash = source["shortHash"];
+	        this.author = source["author"];
+	        this.email = source["email"];
+	        this.date = source["date"];
+	        this.message = source["message"];
+	        this.subject = source["subject"];
+	        this.refs = source["refs"];
+	        this.isHead = source["isHead"];
+	    }
+	}
+	export class GitCommitDetail {
+	    hash: string;
+	    shortHash: string;
+	    author: string;
+	    email: string;
+	    date: string;
+	    subject: string;
+	    message: string;
+	    parent?: string;
+	    diff: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitCommitDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hash = source["hash"];
+	        this.shortHash = source["shortHash"];
+	        this.author = source["author"];
+	        this.email = source["email"];
+	        this.date = source["date"];
+	        this.subject = source["subject"];
+	        this.message = source["message"];
+	        this.parent = source["parent"];
+	        this.diff = source["diff"];
+	        this.error = source["error"];
+	    }
+	}
+	export class GitDiffResult {
+	    path: string;
+	    staged?: string;
+	    unstaged?: string;
+	    binary: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitDiffResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.staged = source["staged"];
+	        this.unstaged = source["unstaged"];
+	        this.binary = source["binary"];
+	        this.error = source["error"];
+	    }
+	}
+	export class GitOpResult {
+	    success: boolean;
+	    output: string;
+	    error?: string;
+	    auth?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitOpResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.output = source["output"];
+	        this.error = source["error"];
+	        this.auth = source["auth"];
+	    }
+	}
+	export class GitRemote {
+	    name: string;
+	    urls: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new GitRemote(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.urls = source["urls"];
 	    }
 	}
 	export class GitStatusResult {
 	    isGitRepo: boolean;
 	    branch: string;
+	    root?: string;
 	    changes: GitChange[];
 	    error?: string;
 	
@@ -158,6 +289,7 @@ export namespace git {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.isGitRepo = source["isGitRepo"];
 	        this.branch = source["branch"];
+	        this.root = source["root"];
 	        this.changes = this.convertValues(source["changes"], GitChange);
 	        this.error = source["error"];
 	    }

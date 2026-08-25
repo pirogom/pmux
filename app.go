@@ -168,12 +168,56 @@ func (a *App) GetGitStatus(workDir string) git.GitStatusResult {
 	return git.GetStatus(workDir)
 }
 
-func (a *App) GitPush(workDir string) string {
+func (a *App) GitPush(workDir string) git.GitOpResult {
 	return git.Push(workDir)
 }
 
-func (a *App) GitPull(workDir string) string {
+func (a *App) GitPull(workDir string) git.GitOpResult {
 	return git.Pull(workDir)
+}
+
+func (a *App) GitFetch(workDir string) git.GitOpResult {
+	return git.Fetch(workDir)
+}
+
+func (a *App) GitCommit(workDir, message string) git.GitOpResult {
+	return git.Commit(workDir, message)
+}
+
+func (a *App) GitStage(workDir string, paths []string) git.GitOpResult {
+	return git.Stage(workDir, paths)
+}
+
+func (a *App) GitUnstage(workDir string, paths []string) git.GitOpResult {
+	return git.Unstage(workDir, paths)
+}
+
+func (a *App) GitStageAll(workDir string) git.GitOpResult {
+	return git.StageAll(workDir)
+}
+
+func (a *App) GetGitLog(workDir string, limit int) ([]git.GitCommit, error) {
+	return git.GetLog(workDir, limit)
+}
+
+func (a *App) GetGitDiff(workDir, path string) git.GitDiffResult {
+	return git.GetDiff(workDir, path)
+}
+
+func (a *App) GetGitCommitDetail(workDir, hash string) git.GitCommitDetail {
+	return git.GetCommitDetail(workDir, hash)
+}
+
+func (a *App) GetGitBranches(workDir string) ([]git.GitBranch, error) {
+	return git.GetBranches(workDir)
+}
+
+func (a *App) GitCheckout(workDir, branch string) git.GitOpResult {
+	return git.Checkout(workDir, branch)
+}
+
+func (a *App) GetGitRemotes(workDir string) ([]git.GitRemote, error) {
+	return git.GetRemotes(workDir)
 }
 
 func (a *App) KillServer() error {

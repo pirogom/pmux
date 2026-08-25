@@ -63,6 +63,9 @@
                     <button id="btn-split-h" class="btn btn-secondary" title="Split Horizontal (Top-down)">
                         <img src="./src/assets/images/split-horizontal.svg" class="btn-icon" alt="">
                     </button>
+                    <button id="btn-toggle-todo" class="btn btn-outline" title="Toggle Todo List">
+                        <span>☑ Todo</span>
+                    </button>
                     <button id="btn-toggle-git" class="btn btn-outline" title="Toggle Git Status Panel">
                         <span>🌿 Git</span>
                         <span id="git-btn-badge" class="git-btn-badge hidden">0</span>
@@ -133,6 +136,23 @@
                 </select>
             </div>
         </aside>
+    </div>
+
+    <!-- Todo List Modal -->
+    <div id="todo-modal" class="modal hidden">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3>☑ Todo List</h3>
+                <button id="btn-close-todo" class="icon-btn" title="Close Todo List">✖</button>
+            </div>
+            <div class="modal-body todo-modal-body">
+                <div id="todo-list" class="todo-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-delete-all-todo" class="btn btn-secondary" title="Delete all todos">🗑 Delete All</button>
+                <button id="btn-add-todo" class="btn btn-primary">➕ Add</button>
+            </div>
+        </div>
     </div>
 
     <!-- Modal for Creating/Editing Profile -->

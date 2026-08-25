@@ -134,6 +134,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/ssh/import", s.handleSSHImport)
 	mux.HandleFunc("/api/config/git-poll-interval", s.handleSaveGitPollInterval)
 	mux.HandleFunc("/api/config", s.handleGetConfig)
+	mux.HandleFunc("/api/todo/load", s.handleTodoLoad)
+	mux.HandleFunc("/api/todo/save", s.handleTodoSave)
 	mux.HandleFunc("/api/server/kill", s.handleKillServer)
 	mux.HandleFunc("/ws/pane/", s.handleWSPane)
 	mux.HandleFunc("/ws/events", s.handleWSEvents)

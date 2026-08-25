@@ -18,7 +18,7 @@
 - **ConPTY Resiliency & TUI Stability**: Uses `coder/websocket` with asynchronous ConPTY resize execution and a 32KB OutPipe buffer, preventing UI freezes during continuous window resizes or running complex TUI applications (Vim, Htop, Neovim, Lazygit, Gitui, etc.).
 - **Pane Auto-Reconnect**: Automatically retries WebSocket connections up to 3 times (with a 1-second delay) upon unexpected connection drops, displaying Toast notifications for connection statuses.
 - **Collapsible Accordion Sidebar UI**: Collapse or expand the **ACTIVE SESSIONS** and **PROFILES** sidebar sections with persistent `localStorage` states. When PROFILES is collapsed, the ACTIVE SESSIONS list dynamically expands to utilize all remaining vertical space.
-- **Integrated Git Dashboard (pure Go, no system git required)**: Detects the working directory of the active terminal pane and shows branch status, uncommitted files (with staging state), and commit history — with staging/unstaging, commits, Fetch/Pull/Push, branch switching, and per-file diff previews.
+- **Integrated Git Dashboard (pure Go, no system git required)**: Detects the working directory of the active terminal pane and shows branch status, uncommitted files (with staging state), and commit history — with staging/unstaging, commits, Fetch/Pull/Push, branch switching, and per-file diff previews. Diff previews and commit details open in a **separate popup window** with **line-level syntax highlighting** (added/removed/hunk lines are color-coded).
 - **SSH Address Book & Quick Connect**: A per-pane extension toolbar (visible while holding `Ctrl`) provides one-click SSH connections through your configured SSH client. The encrypted address book (stored in `~/.pmux/ssh.conf`) supports password-protected Export/Import for migrating data between machines.
 
 ---
@@ -29,6 +29,9 @@
 > **Git Prerequisites & Purpose**
 > - The built-in Git integration is **pure Go ([go-git](https://github.com/go-git/go-git)) based** — no system `git` executable is required.
 > - The Git sidebar supports **change inspection, staging/unstaging, commits, Fetch/Pull/Push, commit history, branch switching, and per-file diff previews**.
+> - Diff previews and commit details are rendered in a **popup viewer** (close with `✖`, `Esc`, or by clicking the backdrop) with **line-level syntax highlighting** — added lines, removed lines, hunk headers, and file metadata are color-coded for readability.
+> - Clicking a **commit hash** in the History list opens the commit detail popup showing the full commit metadata (hash, author, date, message) together with its complete diff.
+> - The **Refresh Interval** selector (1–10s) controls how often the git panel auto-refreshes; the chosen value is **persisted** in the config and restored on the next launch, and is **synchronized across all connected clients** in real time.
 > - push/pull reuses credentials already present on your system: **SSH remotes** use the OpenSSH Authentication Agent or `~/.ssh` keys (with `known_hosts` verification); **HTTPS remotes** use Windows Credential Manager (Git Credential Manager) or a `~/.git-credentials` file. When no credentials are found, the panel explains how to fix it.
 > - Known limitation: submodule change detection and Git LFS support are limited in go-git.
 

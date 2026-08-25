@@ -18,7 +18,7 @@
 - **ConPTY 안정성 및 TUI 먹통 방지**: `coder/websocket` 및 비동기 ConPTY 리사이즈 처리, 32KB OutPipe 버퍼링을 통해 지속적인 창 크기 변경이나 TUI 어플리케이션(Vim, Htop, Neovim, Lazygit, Gitui 등) 실행 시 발생하는 터미널 먹통 및 데드락 현상 방지.
 - **Pane 웹소켓 자동 재접속 (Auto-Reconnect)**: 터미널 커넥션이 끊어질 경우 1초 간격으로 최대 3회 자동 재접속 시도 및 Toast 토스트 알림 안내.
 - **접고 펼치는 사이드바 아코디언 UI (Collapsible Accordion)**: 사이드바의 **ACTIVE SESSIONS** 및 **PROFILES** 섹션을 접고 펼칠 수 있으며 `localStorage`에 상태가 보존됨. PROFILES 섹션을 접으면 ACTIVE SESSIONS 목록이 남은 수직 공간을 100% 가득 활용하는 유연한 높이 동적 확장 기능 제공.
-- **통합 Git 대시보드 (순수 Go, 시스템 git 불필요)**: 현재 활성화된 터미널 Pane의 작업 디렉터리를 자동 감지하여 브랜치 상태, 커밋되지 않은 파일(스테이징 상태 구분), 커밋 로그를 표시하고, 스테이징/언스테이징, 커밋, Fetch/Pull/Push, 브랜치 체크아웃, 파일별 Diff 미리보기를 지원.
+- **통합 Git 대시보드 (순수 Go, 시스템 git 불필요)**: 현재 활성화된 터미널 Pane의 작업 디렉터리를 자동 감지하여 브랜치 상태, 커밋되지 않은 파일(스테이징 상태 구분), 커밋 로그를 표시하고, 스테이징/언스테이징, 커밋, Fetch/Pull/Push, 브랜치 체크아웃, 파일별 Diff 미리보기를 지원합니다. Diff 미리보기와 커밋 상세는 **별도 팝업 창**으로 열리며 **줄 단위 문법 하이라이트**(추가/삭제/헌크 라인 색상 구분)가 적용됩니다.
 - **SSH 주소록 및 원클릭 접속 (SSH Address Book & Quick Connect)**: Pane별 확장 툴바(`Ctrl` 키를 누르면 표시)에서 설정된 SSH 클라이언트로 원클릭 SSH 접속이 가능합니다. 암호화된 주소록(`~/.pmux/ssh.conf`)을 제공하며, 다른 기기로의 데이터 이전을 위한 비밀번호 보호 Export/Import를 지원합니다.
 
 ---
@@ -29,6 +29,9 @@
 > **Git 요구사항 및 개발 철학**
 > - 내장 Git 기능은 **순수 Go([go-git](https://github.com/go-git/go-git)) 기반**으로 동작합니다. 시스템에 `git` 커맨드라인 도구가 설치되어 있지 않아도 사용할 수 있습니다.
 > - Git 사이드바에서 **변경 사항 확인, 스테이징/언스테이징, 커밋, Fetch/Pull/Push, 커밋 로그, 브랜치 조회/체크아웃, 파일별 Diff 미리보기**를 모두 지원합니다.
+> - Diff 미리보기와 커밋 상세는 **팝업 뷰어**(✖ 버튼, `Esc`, 또는 배경 클릭으로 닫기)로 표시되며 **줄 단위 하이라이트**가 적용됩니다 — 추가된 줄, 삭제된 줄, 헌크 헤더, 파일 메타데이터가 색상으로 구분됩니다.
+> - History 목록에서 **커밋 해시**를 클릭하면 해당 커밋의 전체 메타데이터(해시, 작성자, 날짜, 메시지)와 전체 Diff가 팝업에 함께 표시됩니다.
+> - **Refresh Interval** 선택기(1~10초)로 Git 패널의 자동 새로고침 주기를 조절할 수 있으며, 선택한 값은 **config에 저장되어 재시작 시 복원**되고 **연결된 모든 클라이언트에 실시간 동기화**됩니다.
 > - push/pull 인증은 시스템에 이미 존재하는 인증 정보를 자동으로 재사용합니다.
 >   - **SSH 원격**: OpenSSH Authentication Agent(`ssh-add`로 등록된 키) → `~/.ssh/id_ed25519`/`id_rsa`/`id_ecdsa` 개인키 (known_hosts 검증 포함)
 >   - **HTTPS 원격**: Windows 자격 증명 관리자(git.exe/Git Credential Manager가 저장한 자격 증명) → `~/.git-credentials` 파일

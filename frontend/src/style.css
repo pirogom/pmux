@@ -619,6 +619,30 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
   height: 100%;
   flex: 1;
   overflow: hidden;
+  position: relative;
+}
+
+/* Viewport badge shown when this client's viewport is smaller than the
+   pane's canonical terminal size (tmux-style window into the screen) */
+.viewport-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  z-index: 20;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  background: rgba(229, 57, 53, 0.85);
+  color: #ffffff;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.xterm-instance.clipped-x .viewport-badge,
+.xterm-instance.clipped-y .viewport-badge {
+  opacity: 1;
 }
 
 .xterm-viewport {

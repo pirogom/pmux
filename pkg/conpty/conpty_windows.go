@@ -197,6 +197,8 @@ type ConPTY struct {
 	OutPipe    io.ReadCloser
 	ProcHandle windows.Handle
 	Pid        int
+	cols       int
+	rows       int
 	resizeMu   sync.Mutex
 }
 
@@ -359,7 +361,16 @@ func New(command string, args []string, dir string, env []string, cols, rows int
 		OutPipe:    outPipeFile,
 		ProcHandle: pi.Process,
 		Pid:        int(pi.ProcessId),
+		cols:       cols,
+		rows:       rows,
 	}, nil
+}
+
+// GetSize returns the last size this ConPTY was created/resized to.
+func (c *ConPTY) GetSize() (int, int) {
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+	return c.cols, c.rows
 }
 
 func (c *ConPTY) Resize(cols, rows int) error {
@@ -369,6 +380,8 @@ func (c *ConPTY) Resize(cols, rows int) error {
 	c.resizeMu.Lock()
 	defer c.resizeMu.Unlock()
 
+	c.cols = cols
+	c.rows = rows
 	return c.resizeLocked(cols, rows)
 }
 
@@ -398,6 +411,8 @@ func (c *ConPTY) ForceRedraw(cols, rows int) error {
 	}
 	_ = c.resizeLocked(jitterCols, rows)
 	time.Sleep(15 * time.Millisecond)
+	c.cols = cols
+	c.rows = rows
 	return c.resizeLocked(cols, rows)
 }
 

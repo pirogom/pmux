@@ -36,16 +36,9 @@ type Config struct {
 	GitPollInterval  int       `json:"gitPollInterval"`
 }
 
-var (
-	configDir  string
-	configFile string
-	mu         sync.Mutex
-)
+var mu sync.Mutex
 
 func GetConfigDir() (string, error) {
-	if configDir != "" {
-		return configDir, nil
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -54,16 +47,22 @@ func GetConfigDir() (string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	configDir = dir
-	configFile = filepath.Join(dir, "config.json")
-	return configDir, nil
+	return dir, nil
+}
+
+func getConfigFile() (string, error) {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
 }
 
 func LoadConfig() (*Config, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	_, err := GetConfigDir()
+	configFile, err := getConfigFile()
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +109,7 @@ func SaveConfig(cfg *Config) error {
 }
 
 func SaveConfigLocked(cfg *Config) error {
-	_, err := GetGetConfigDirErr()
+	configFile, err := getConfigFile()
 	if err != nil {
 		return err
 	}
@@ -121,8 +120,4 @@ func SaveConfigLocked(cfg *Config) error {
 	}
 
 	return os.WriteFile(configFile, data, 0644)
-}
-
-func GetGetConfigDirErr() (string, error) {
-	return GetConfigDir()
 }

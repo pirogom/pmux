@@ -390,8 +390,6 @@ func (s *Server) handleProfilesNotifyChange(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-
-
 func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodPost {
@@ -744,6 +742,28 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(16 * 1024 * 1024) // 16MB limit for terminal paste/inputs
 	defer removeWSConn(conn)
 
+	// Register the client before sending any frames so resize messages it
+	// sends back are always routed to a known client view.
+	sendCh := make(chan []byte, 1024)
+	pane.mu.Lock()
+	pane.Clients[conn] = &clientView{conn: conn, ch: sendCh}
+	canonicalCols, canonicalRows := pane.Cols, pane.Rows
+	pane.mu.Unlock()
+
+	defer func() {
+		s.sessionMgr.HandleClientDetach(paneID, conn)
+	}()
+
+	// Tell the client the pane's canonical terminal size BEFORE the preamble
+	// and history replay, so it can size its terminal buffer correctly.
+	// Clients whose viewport is smaller than this size render a clipped
+	// viewport into the canonical screen (tmux `window-size largest` model).
+	if canonicalCols >= 10 && canonicalRows >= 3 {
+		if sizeMsg, err := json.Marshal(map[string]interface{}{"type": "pane-size", "cols": canonicalCols, "rows": canonicalRows}); err == nil {
+			_ = safeWriteWS(conn, sizeMsg)
+		}
+	}
+
 	// Send active VT mode preamble (e.g. Alternate Buffer, SGR Mouse, Bracketed Paste) before history
 	preamble := pane.GetModePreamble()
 	if len(preamble) > 0 {
@@ -755,20 +775,6 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 	if len(history) > 0 {
 		_ = safeWriteWSBinary(conn, history)
 	}
-
-	sendCh := make(chan []byte, 1024)
-	pane.mu.Lock()
-	pane.Clients[conn] = sendCh
-	pane.mu.Unlock()
-
-	defer func() {
-		pane.mu.Lock()
-		if ch, ok := pane.Clients[conn]; ok {
-			delete(pane.Clients, conn)
-			close(ch)
-		}
-		pane.mu.Unlock()
-	}()
 
 	// Dedicated non-blocking writer pump: coalesces queued chunks into unified frames
 	ctx, cancel := context.WithCancel(r.Context())
@@ -820,12 +826,20 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 				case "input":
 					pane.WriteInput([]byte(wsMsg.Data))
 				case "resize":
-					if pane.PTY != nil && wsMsg.Cols > 0 && wsMsg.Rows > 0 {
-						pane.TriggerResize(wsMsg.Cols, wsMsg.Rows)
+					// Per-client viewport resize: the ConPTY is resized only
+					// when the canonical (largest client) size changes.
+					if wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						s.sessionMgr.HandleClientResize(paneID, conn, wsMsg.Cols, wsMsg.Rows)
 					}
 				case "redraw":
-					if pane.PTY != nil && wsMsg.Cols > 0 && wsMsg.Rows > 0 {
-						pane.TriggerForceRedraw(wsMsg.Cols, wsMsg.Rows)
+					// Explicit user-requested redraw (manual refresh): update
+					// the client's viewport first, then force a full redraw
+					// of the ConPTY at the canonical size.
+					if wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						cCols, cRows := s.sessionMgr.HandleClientResize(paneID, conn, wsMsg.Cols, wsMsg.Rows)
+						if pane.PTY != nil && cCols >= 10 && cRows >= 3 {
+							pane.TriggerForceRedraw(cCols, cRows)
+						}
 					}
 				}
 			} else {

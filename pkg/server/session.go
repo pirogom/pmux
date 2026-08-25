@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -69,6 +70,18 @@ type LayoutNode struct {
 	Children  []*LayoutNode  `json:"children"`  // 자식 노드
 }
 
+// clientView tracks a single attached client's viewport geometry for a pane.
+// The pane keeps ONE canonical terminal size (the largest attached client,
+// mirroring tmux's `window-size largest`), so each client only reports its
+// own viewport size and the underlying ConPTY is resized only when the
+// canonical size itself changes.
+type clientView struct {
+	conn *websocket.Conn
+	ch   chan []byte
+	cols int
+	rows int
+}
+
 type Pane struct {
 	ID          string                          `json:"id"`
 	SessionID   string                          `json:"sessionId"`
@@ -79,7 +92,7 @@ type Pane struct {
 	Rows        int                             `json:"rows"`
 	PTY         *conpty.ConPTY                  `json:"-"`
 	Buffer      *RingBuffer                     `json:"-"`
-	Clients     map[*websocket.Conn]chan []byte `json:"-"`
+	Clients     map[*websocket.Conn]*clientView `json:"-"`
 	resizeTimer *time.Timer
 	inCh        chan []byte
 	inDone      chan struct{}
@@ -105,7 +118,7 @@ func newPane(paneID, sessionID, workDir, command string, args []string, cols, ro
 		Rows:        rows,
 		PTY:         ptyInst,
 		Buffer:      NewRingBuffer(512 * 1024),
-		Clients:     make(map[*websocket.Conn]chan []byte),
+		Clients:     make(map[*websocket.Conn]*clientView),
 		inCh:        make(chan []byte, 1024),
 		inDone:      make(chan struct{}),
 		modeTracker: NewVTModeTracker(),
@@ -170,41 +183,8 @@ func (p *Pane) CloseInput() {
 	})
 }
 
-func (p *Pane) TriggerResize(cols, rows int) {
-	if cols < 10 || rows < 3 {
-		return // Ignore invalid/tiny bounds to protect ConPTY & TUI apps
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.Cols == cols && p.Rows == rows {
-		return // Skip duplicate resize
-	}
-
-	p.Cols = cols
-	p.Rows = rows
-
-	if p.resizeTimer != nil {
-		p.resizeTimer.Stop()
-	}
-
-	p.resizeTimer = time.AfterFunc(30*time.Millisecond, func() {
-		p.mu.Lock()
-		c := p.Cols
-		r := p.Rows
-		ptyInst := p.PTY
-		p.mu.Unlock()
-
-		if ptyInst != nil && c >= 10 && r >= 3 {
-			// Asynchronous non-blocking Win32 API invocation
-			go func(inst *conpty.ConPTY, targetCols, targetRows int) {
-				_ = inst.Resize(targetCols, targetRows)
-			}(ptyInst, c, r)
-		}
-	})
-}
-
+// TriggerForceRedraw records the given size and schedules a full ConPTY
+// redraw at it (no duplicate check — callers own change detection).
 func (p *Pane) TriggerForceRedraw(cols, rows int) {
 	if cols < 10 || rows < 3 {
 		return
@@ -232,6 +212,158 @@ func (p *Pane) TriggerForceRedraw(cols, rows int) {
 			}(ptyInst, c, r)
 		}
 	})
+}
+
+// scheduleConptyResize debounces an actual ConPTY resize to the pane's
+// current canonical size. Unlike TriggerResize it performs no duplicate
+// check: the caller has already committed p.Cols/p.Rows, so comparing them
+// again would skip the real resize entirely.
+func (p *Pane) scheduleConptyResize() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.resizeTimer != nil {
+		p.resizeTimer.Stop()
+	}
+
+	p.resizeTimer = time.AfterFunc(30*time.Millisecond, func() {
+		p.mu.Lock()
+		c := p.Cols
+		r := p.Rows
+		ptyInst := p.PTY
+		p.mu.Unlock()
+
+		if ptyInst != nil && c >= 10 && r >= 3 {
+			// Asynchronous non-blocking Win32 API invocation
+			go func(inst *conpty.ConPTY, targetCols, targetRows int) {
+				_ = inst.Resize(targetCols, targetRows)
+			}(ptyInst, c, r)
+		}
+	})
+}
+
+// canonicalSize returns the pane's canonical terminal size: the largest
+// dimensions reported by any attached client (tmux `window-size largest`
+// behavior). Clients that have not reported a viewport yet (0x0) are ignored
+// so they cannot collapse the canonical size; when no client has a valid
+// viewport the pane's current size is kept. Must be called with p.mu held.
+func (p *Pane) canonicalSize() (cols, rows int) {
+	hasView := false
+	for _, cv := range p.Clients {
+		if cv.cols < 10 || cv.rows < 3 {
+			continue // viewport not reported yet — leave the size untouched
+		}
+		hasView = true
+		if cv.cols > cols {
+			cols = cv.cols
+		}
+		if cv.rows > rows {
+			rows = cv.rows
+		}
+	}
+	if !hasView {
+		return p.Cols, p.Rows
+	}
+	return cols, rows
+}
+
+// broadcastPaneSize notifies all attached clients of the pane's canonical
+// terminal size. Each client sizes its terminal buffer to this size; clients
+// whose viewport is smaller display a clipped viewport into the canonical
+// screen (tmux-style), so the raw byte stream stays identical for everyone.
+func (p *Pane) broadcastPaneSize(cols, rows int) {
+	msg, err := json.Marshal(map[string]interface{}{
+		"type": "pane-size",
+		"cols": cols,
+		"rows": rows,
+	})
+	if err != nil {
+		return
+	}
+	p.mu.Lock()
+	clients := make([]*clientView, 0, len(p.Clients))
+	for _, cv := range p.Clients {
+		clients = append(clients, cv)
+	}
+	p.mu.Unlock()
+
+	for _, cv := range clients {
+		go func(c *websocket.Conn) {
+			_ = safeWriteWS(c, msg)
+		}(cv.conn)
+	}
+}
+
+// HandleClientResize records a single client's viewport size and resizes the
+// pane's ConPTY only when the canonical (largest) size changes. Clients
+// resizing within the canonical size never trigger a terminal redraw — the
+// core fix for multi-client sessions with different window sizes.
+// It returns the pane's current canonical size.
+func (sm *SessionManager) HandleClientResize(paneID string, conn *websocket.Conn, cols, rows int) (int, int) {
+	if cols < 10 || rows < 3 {
+		return 0, 0 // Ignore invalid/tiny bounds, mirroring TriggerResize
+	}
+	pane, ok := sm.GetPane(paneID)
+	if !ok {
+		return 0, 0
+	}
+
+	pane.mu.Lock()
+	cv, ok := pane.Clients[conn]
+	if !ok {
+		// Unknown client (e.g. stale message after detach): report the
+		// current canonical size without touching the ConPTY.
+		curCols, curRows := pane.Cols, pane.Rows
+		pane.mu.Unlock()
+		return curCols, curRows
+	}
+	cv.cols = cols
+	cv.rows = rows
+	newCols, newRows := pane.canonicalSize()
+	changed := newCols != pane.Cols || newRows != pane.Rows
+	if changed {
+		pane.Cols = newCols
+		pane.Rows = newRows
+	}
+	pane.mu.Unlock()
+
+	if changed {
+		pane.scheduleConptyResize()
+		pane.broadcastPaneSize(newCols, newRows)
+	}
+	return newCols, newRows
+}
+
+// HandleClientDetach removes a client from the pane and recomputes the
+// canonical size. When the largest client leaves, the pane is shrunk to the
+// next largest attached client and all remaining clients are notified.
+func (sm *SessionManager) HandleClientDetach(paneID string, conn *websocket.Conn) {
+	pane, ok := sm.GetPane(paneID)
+	if !ok {
+		return
+	}
+
+	pane.mu.Lock()
+	cv, ok := pane.Clients[conn]
+	if !ok {
+		pane.mu.Unlock()
+		return
+	}
+	delete(pane.Clients, conn)
+	close(cv.ch)
+
+	newCols, newRows := pane.canonicalSize()
+	changed := newCols != pane.Cols || newRows != pane.Rows
+	if changed {
+		pane.Cols = newCols
+		pane.Rows = newRows
+	}
+	pane.mu.Unlock()
+
+	if changed {
+		pane.scheduleConptyResize()
+		pane.broadcastPaneSize(newCols, newRows)
+	}
 }
 
 type Session struct {
@@ -534,9 +666,9 @@ func (p *Pane) readLoop() {
 			}
 
 			// 3. Non-blocking broadcast to all active client channels
-			for _, ch := range p.Clients {
+			for _, cv := range p.Clients {
 				select {
-				case ch <- chunk:
+				case cv.ch <- chunk:
 				default:
 					// Channel is full: client writer will catch up and batch
 				}
@@ -636,11 +768,11 @@ func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill 
 	}
 
 	pane.mu.Lock()
-	for conn, ch := range pane.Clients {
-		close(ch)
+	for conn, cv := range pane.Clients {
+		close(cv.ch)
 		_ = conn.Close(websocket.StatusNormalClosure, "pane closed")
 	}
-	pane.Clients = make(map[*websocket.Conn]chan []byte)
+	pane.Clients = make(map[*websocket.Conn]*clientView)
 	pane.mu.Unlock()
 
 	delete(sess.Panes, paneID)
@@ -685,11 +817,11 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 			pane.PTY.Close()
 		}
 		pane.mu.Lock()
-		for conn, ch := range pane.Clients {
-			close(ch)
+		for conn, cv := range pane.Clients {
+			close(cv.ch)
 			_ = conn.Close(websocket.StatusNormalClosure, "session closed")
 		}
-		pane.Clients = make(map[*websocket.Conn]chan []byte)
+		pane.Clients = make(map[*websocket.Conn]*clientView)
 		pane.mu.Unlock()
 		delete(sm.panes, paneID)
 	}
@@ -753,8 +885,6 @@ func removeLayoutNode(current *LayoutNode, targetID string) *LayoutNode {
 	current.Children = newChildren
 	return current
 }
-
-
 
 func convertToSavedLayoutNode(node *LayoutNode, panes map[string]*Pane) *config.SavedLayoutNode {
 	if node == nil {

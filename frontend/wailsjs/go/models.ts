@@ -1,5 +1,19 @@
 export namespace config {
 	
+	export class ProfileFolder {
+	    id: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileFolder(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	    }
+	}
 	export class SavedLayoutNode {
 	    id?: string;
 	    direction?: string;
@@ -51,6 +65,7 @@ export namespace config {
 	    env: string[];
 	    isPreset: boolean;
 	    savedLayout?: SavedLayoutNode;
+	    folder?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Profile(source);
@@ -66,6 +81,7 @@ export namespace config {
 	        this.env = source["env"];
 	        this.isPreset = source["isPreset"];
 	        this.savedLayout = this.convertValues(source["savedLayout"], SavedLayoutNode);
+	        this.folder = source["folder"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -89,6 +105,7 @@ export namespace config {
 	export class Config {
 	    defaultProfileId: string;
 	    profiles: Profile[];
+	    profileFolders: ProfileFolder[];
 	    serverPort: number;
 	    theme: string;
 	    gitPollInterval: number;
@@ -101,6 +118,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.defaultProfileId = source["defaultProfileId"];
 	        this.profiles = this.convertValues(source["profiles"], Profile);
+	        this.profileFolders = this.convertValues(source["profileFolders"], ProfileFolder);
 	        this.serverPort = source["serverPort"];
 	        this.theme = source["theme"];
 	        this.gitPollInterval = source["gitPollInterval"];
@@ -124,6 +142,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 
 }

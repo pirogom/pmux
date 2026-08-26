@@ -107,6 +107,9 @@ func (a *App) SaveProfile(p config.Profile) error {
 			if p.SavedLayout == nil && existing.SavedLayout != nil {
 				p.SavedLayout = existing.SavedLayout
 			}
+			if p.Folder == "" && existing.Folder != "" {
+				p.Folder = existing.Folder
+			}
 			cfg.Profiles[i] = p
 			found = true
 			break
@@ -147,6 +150,71 @@ func (a *App) DeleteProfile(id string) error {
 func (a *App) notifyProfilesChanged() {
 	port := server.GetServerPort()
 	_, _ = http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/profiles/notify-change", port), "application/json", nil)
+}
+
+func (a *App) CreateProfileFolder(name string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.CreateFolder(name)
+	err = config.SaveConfig(cfg)
+	if err == nil {
+		a.notifyProfilesChanged()
+	}
+	return err
+}
+
+func (a *App) RenameProfileFolder(id, name string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.RenameFolder(id, name)
+	err = config.SaveConfig(cfg)
+	if err == nil {
+		a.notifyProfilesChanged()
+	}
+	return err
+}
+
+func (a *App) DeleteProfileFolder(id string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.DeleteFolder(id)
+	err = config.SaveConfig(cfg)
+	if err == nil {
+		a.notifyProfilesChanged()
+	}
+	return err
+}
+
+func (a *App) MoveProfile(profileID, folderID string, index int) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.MoveProfile(profileID, folderID, index)
+	err = config.SaveConfig(cfg)
+	if err == nil {
+		a.notifyProfilesChanged()
+	}
+	return err
+}
+
+func (a *App) ReorderProfileFolders(ids []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.ReorderProfileFolders(ids)
+	err = config.SaveConfig(cfg)
+	if err == nil {
+		a.notifyProfilesChanged()
+	}
+	return err
 }
 
 func (a *App) GetProfiles() ([]config.Profile, error) {

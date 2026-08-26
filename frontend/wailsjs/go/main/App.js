@@ -10,12 +10,20 @@ export function CloseSession(arg1) {
   return window['go']['main']['App']['CloseSession'](arg1);
 }
 
+export function CreateProfileFolder(arg1) {
+  return window['go']['main']['App']['CreateProfileFolder'](arg1);
+}
+
 export function CreateSession(arg1) {
   return window['go']['main']['App']['CreateSession'](arg1);
 }
 
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
+}
+
+export function DeleteProfileFolder(arg1) {
+  return window['go']['main']['App']['DeleteProfileFolder'](arg1);
 }
 
 export function ExportSSH(arg1) {
@@ -110,6 +118,10 @@ export function KillServer() {
   return window['go']['main']['App']['KillServer']();
 }
 
+export function MoveProfile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MoveProfile'](arg1, arg2, arg3);
+}
+
 export function OpenWorkFolder(arg1) {
   return window['go']['main']['App']['OpenWorkFolder'](arg1);
 }
@@ -118,8 +130,16 @@ export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
 }
 
+export function RenameProfileFolder(arg1, arg2) {
+  return window['go']['main']['App']['RenameProfileFolder'](arg1, arg2);
+}
+
 export function RenameSession(arg1, arg2) {
   return window['go']['main']['App']['RenameSession'](arg1, arg2);
+}
+
+export function ReorderProfileFolders(arg1) {
+  return window['go']['main']['App']['ReorderProfileFolders'](arg1);
 }
 
 export function SaveGitPollInterval(arg1) {

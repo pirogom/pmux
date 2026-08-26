@@ -9,9 +9,13 @@ export function ClosePane(arg1:string,arg2:string):Promise<void>;
 
 export function CloseSession(arg1:string):Promise<void>;
 
+export function CreateProfileFolder(arg1:string):Promise<void>;
+
 export function CreateSession(arg1:main.CreateSessionReq):Promise<Record<string, any>>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
+
+export function DeleteProfileFolder(arg1:string):Promise<void>;
 
 export function ExportSSH(arg1:string):Promise<void>;
 
@@ -59,11 +63,17 @@ export function ImportSSH(arg1:string):Promise<void>;
 
 export function KillServer():Promise<void>;
 
+export function MoveProfile(arg1:string,arg2:string,arg3:number):Promise<void>;
+
 export function OpenWorkFolder(arg1:string):Promise<void>;
 
 export function QuitApp():Promise<void>;
 
+export function RenameProfileFolder(arg1:string,arg2:string):Promise<void>;
+
 export function RenameSession(arg1:string,arg2:string):Promise<void>;
+
+export function ReorderProfileFolders(arg1:Array<string>):Promise<void>;
 
 export function SaveGitPollInterval(arg1:number):Promise<void>;
 

@@ -456,6 +456,7 @@ function initCollapsibleSidebarSections() {
     const headerProfiles = document.getElementById('header-profiles');
     const sectionProfiles = document.getElementById('section-profiles');
     const btnAddProfile = document.getElementById('btn-add-profile');
+    const btnAddFolder = document.getElementById('btn-add-folder');
 
     const updateSectionsExpandState = () => {
         if (sectionProfiles && sectionSessions) {
@@ -500,6 +501,13 @@ function initCollapsibleSidebarSections() {
     // Prevent Add Profile button click from triggering section toggle
     if (btnAddProfile) {
         btnAddProfile.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    // Prevent Add Folder button click from triggering section toggle
+    if (btnAddFolder) {
+        btnAddFolder.addEventListener('click', (e) => {
             e.stopPropagation();
         });
     }

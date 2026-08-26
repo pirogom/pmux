@@ -114,7 +114,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/sessions/active-pane", s.handleSetActivePane)
 	mux.HandleFunc("/api/sessions/open-work-folder", s.handleOpenWorkFolder)
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
+	mux.HandleFunc("/api/profiles/move", s.handleProfileMove)
 	mux.HandleFunc("/api/profiles/notify-change", s.handleProfilesNotifyChange)
+	mux.HandleFunc("/api/profile-folders/create", s.handleProfileFolderCreate)
+	mux.HandleFunc("/api/profile-folders/rename", s.handleProfileFolderRename)
+	mux.HandleFunc("/api/profile-folders/delete", s.handleProfileFolderDelete)
+	mux.HandleFunc("/api/profile-folders/reorder", s.handleProfileFolderReorder)
 	mux.HandleFunc("/api/git/status", s.handleGitStatus)
 	mux.HandleFunc("/api/git/log", s.handleGitLog)
 	mux.HandleFunc("/api/git/diff", s.handleGitDiff)
@@ -417,6 +422,9 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 				if p.SavedLayout == nil && existing.SavedLayout != nil {
 					p.SavedLayout = existing.SavedLayout
 				}
+				if p.Folder == "" && existing.Folder != "" {
+					p.Folder = existing.Folder
+				}
 				cfg.Profiles[i] = p
 				found = true
 				break
@@ -443,6 +451,139 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(cfg.Profiles)
+}
+
+func (s *Server) handleProfileMove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ProfileID string `json:"profileId"`
+		FolderID  string `json:"folderId"`
+		Index     int    `json:"index"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cfg.MoveProfile(req.ProfileID, req.FolderID, req.Index)
+	if err := config.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (s *Server) handleProfileFolderCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	id := cfg.CreateFolder(req.Name)
+	if err := config.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+}
+
+func (s *Server) handleProfileFolderRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cfg.RenameFolder(req.ID, req.Name)
+	if err := config.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (s *Server) handleProfileFolderDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cfg.DeleteFolder(req.ID)
+	if err := config.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (s *Server) handleProfileFolderReorder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cfg.ReorderProfileFolders(req.IDs)
+	if err := config.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {

@@ -208,6 +208,13 @@ body.resizing-sidebar {
   gap: 6px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 .chevron-icon {
   font-size: 0.65rem;
   color: var(--text-muted);
@@ -313,6 +320,93 @@ body.resizing-sidebar {
   font-weight: 600;
   border-color: rgba(77, 120, 204, 0.3);
   box-shadow: inset 3px 0 0 var(--primary);
+}
+
+/* Profile folders */
+.profile-list li.profile-folder {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-bright);
+  background-color: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.06);
+  margin-top: 2px;
+}
+
+.profile-list li.profile-folder:hover {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.profile-list li.profile-folder .folder-chevron {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.profile-list li.profile-folder .folder-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-list li.profile-folder .folder-count {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+.profile-list li .folder-name-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  background: var(--bg-input, #1e1e1e);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 1px 4px;
+  outline: none;
+}
+
+.profile-list li.profile-item.in-folder {
+  padding-left: 22px;
+}
+
+.profile-list li.profile-item.in-folder::before {
+  content: '└';
+  flex: 0 0 auto;
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.profile-list.drag-over-empty {
+  border: 1px dashed var(--primary);
+  border-radius: var(--radius);
+  padding: 2px;
+  background-color: rgba(77, 120, 204, 0.06);
+}
+
+.profile-list li.dragging {
+  opacity: 0.4;
+}
+
+.profile-list li.drag-over-before {
+  border-top: 2px solid var(--primary);
+}
+
+.profile-list li.drag-over-after {
+  border-bottom: 2px solid var(--primary);
+}
+
+.profile-list li.drag-over-folder {
+  background-color: rgba(77, 120, 204, 0.15);
+  border-color: var(--primary);
 }
 
 /* Main Content */

@@ -5,6 +5,7 @@ export const state = {
     activePaneId: null,
     sessions: [],
     profiles: [],
+    profileFolders: [],
     detectedPresets: [],
     activePanesMap: new Map(), // paneId -> { term, ws, element }
     currentGitPollInterval: 3

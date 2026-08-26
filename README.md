@@ -15,6 +15,7 @@
 - **Flexible Multi-Pane Terminal Splitting**: Split terminal views horizontally or vertically with mouse-drag split resizing.
 - **Real-Time Multi-Client Synchronization**: Synchronize active sessions, pane splits, focus highlights, session renaming, and profile configurations instantly across multiple open GUI windows and web clients via non-blocking WebSocket broadcasts (`/ws/events`).
 - **Profile Layout Persistence & Automatic Restoration**: Save custom profiles with command defaults. Pane split layout trees (`SavedLayout`) are automatically saved to `config.json` so launching a profile restores the exact multi-pane layout and working directories.
+- **Profile Folders & Drag-and-Drop Organization**: Organize profiles into folders right from the PROFILES sidebar tree — create folders with the **📁** button, drag profiles onto folders to make them sub-items, reorder profiles and folders freely, double-click a folder name to rename it inline, and delete folders with the profiles inside automatically moved back to the root list.
 - **ConPTY Resiliency & TUI Stability**: Uses `coder/websocket` with asynchronous ConPTY resize execution and a 32KB OutPipe buffer, preventing UI freezes during continuous window resizes or running complex TUI applications (Vim, Htop, Neovim, Lazygit, Gitui, etc.).
 - **Pane Auto-Reconnect**: Automatically retries WebSocket connections up to 3 times (with a 1-second delay) upon unexpected connection drops, displaying Toast notifications for connection statuses.
 - **Collapsible Accordion Sidebar UI**: Collapse or expand the **ACTIVE SESSIONS** and **PROFILES** sidebar sections with persistent `localStorage` states. When PROFILES is collapsed, the ACTIVE SESSIONS list dynamically expands to utilize all remaining vertical space.
@@ -175,6 +176,7 @@ The compiled executable will be located in the `build/bin/` directory.
 ### 2. Profile Management
 - Click **➕ Add Profile** in the left sidebar to save reusable environment profiles (Command, Arguments, Working Directory).
 - Launching a profile automatically recreates its saved split pane blueprint.
+- **Profile Folders**: Click the **📁 Add Folder** button to create a folder (tree root item) and enter inline rename mode immediately. Drag a profile onto a folder to move it inside, or drag profiles/folders to reorder them — dropping onto the empty area below the list moves items back to the root level. Double-click a folder name to rename it inline (`Enter` to confirm, `Esc` to cancel). Deleting a folder moves its profiles back to the root list automatically.
 
 ### 3. Sidebar Collapsible Sections
 - Click the **ACTIVE SESSIONS** or **PROFILES** section headers to toggle section visibility.

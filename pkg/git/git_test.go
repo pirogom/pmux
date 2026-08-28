@@ -7,6 +7,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -311,3 +312,131 @@ func indexOf(haystack, needle string) int {
 	}
 	return -1
 }
+
+func newTestRepoWithExecutable(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+
+	sig := &object.Signature{Name: "Test User", Email: "test@example.com"}
+	scriptPath := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho hi\n"), 0644); err != nil {
+		t.Fatalf("write run.sh: %v", err)
+	}
+	if err := wt.AddWithOptions(&gogit.AddOptions{Path: "run.sh"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	// Force the index entry to filemode.Executable
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	e, err := idx.Entry("run.sh")
+	if err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+	e.Mode = filemode.Executable
+	if err := repo.Storer.SetIndex(idx); err != nil {
+		t.Fatalf("set index: %v", err)
+	}
+
+	if _, err := wt.Commit("add executable script", &gogit.CommitOptions{Author: sig}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return dir
+}
+
+func TestGetStatus_FileModeIgnored_ExecutableInIndex_Clean(t *testing.T) {
+	dir := newTestRepoWithExecutable(t)
+	res := GetStatus(dir)
+	if !res.IsGitRepo {
+		t.Fatalf("expected git repo")
+	}
+	if len(res.Changes) != 0 {
+		t.Fatalf("expected 0 changes for file with identical content despite mode difference, got %+v", res.Changes)
+	}
+}
+
+func TestGetStatus_FileModeIgnored_ExecutableInIndex_ModifiedContent(t *testing.T) {
+	dir := newTestRepoWithExecutable(t)
+	scriptPath := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho hi v2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res := GetStatus(dir)
+	if !res.IsGitRepo {
+		t.Fatalf("expected git repo")
+	}
+	if len(res.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %+v", res.Changes)
+	}
+	if res.Changes[0].Path != "run.sh" || !res.Changes[0].Unstaged || res.Changes[0].Staged {
+		t.Fatalf("unexpected change status: %+v", res.Changes[0])
+	}
+}
+
+func TestStage_FileModeIgnored_PreservesExecutableMode(t *testing.T) {
+	dir := newTestRepoWithExecutable(t)
+	scriptPath := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho hi v2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res := Stage(dir, []string{"run.sh"})
+	if !res.Success {
+		t.Fatalf("stage failed: %s", res.Error)
+	}
+	// Check index entry mode
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := idx.Entry("run.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Mode != filemode.Executable {
+		t.Fatalf("expected filemode.Executable in index after staging, got %v", entry.Mode)
+	}
+
+	st := GetStatus(dir)
+	if len(st.Changes) != 1 || !st.Changes[0].Staged || st.Changes[0].Unstaged {
+		t.Fatalf("expected 1 staged change, got %+v", st.Changes)
+	}
+
+	t.Setenv("HOME", dir)
+	commitRes := Commit(dir, "updated script")
+	if commitRes.Success {
+		head, err := repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitObj, err := repo.CommitObject(head.Hash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		tree, err := commitObj.Tree()
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := tree.File("run.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Mode != filemode.Executable {
+			t.Fatalf("expected committed tree to have filemode.Executable, got %v", f.Mode)
+		}
+	}
+}
+

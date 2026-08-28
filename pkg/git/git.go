@@ -5,7 +5,9 @@ package git
 import (
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -128,3 +130,64 @@ func currentBranch(repo *gogit.Repository) string {
 	}
 	return ""
 }
+
+// isFileModeIgnored returns true if filemode differences (100755 vs 100644)
+// should be ignored when comparing worktree and index/tree.
+func isFileModeIgnored(repo *gogit.Repository) bool {
+	if cfg, err := repo.Config(); err == nil {
+		opt := cfg.Raw.Section("core").Option("filemode")
+		if opt != "" {
+			val := strings.ToLower(strings.TrimSpace(opt))
+			if val == "false" || val == "0" || val == "no" || val == "off" {
+				return true
+			}
+			if val == "true" || val == "1" || val == "yes" || val == "on" {
+				return false
+			}
+		}
+	}
+	return runtime.GOOS == "windows"
+}
+
+// isSameContent checks if the file on disk matches the given blob hash.
+func isSameContent(bundle *repoBundle, path string, targetHash plumbing.Hash) bool {
+	f, err := bundle.worktree.Filesystem.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	fi, err := bundle.worktree.Filesystem.Lstat(path)
+	if err != nil {
+		return false
+	}
+
+	h := plumbing.NewHasher(plumbing.BlobObject, fi.Size())
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+
+	return h.Sum() == targetHash
+}
+
+// headFileHash looks up the blob hash for the given path in the HEAD commit tree.
+func headFileHash(b *repoBundle, path string) (plumbing.Hash, bool) {
+	head, err := b.repo.Head()
+	if err != nil {
+		return plumbing.ZeroHash, false
+	}
+	commit, err := b.repo.CommitObject(head.Hash())
+	if err != nil {
+		return plumbing.ZeroHash, false
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return plumbing.ZeroHash, false
+	}
+	f, err := tree.File(path)
+	if err != nil {
+		return plumbing.ZeroHash, false
+	}
+	return f.Hash, true
+}
+

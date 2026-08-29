@@ -21,6 +21,7 @@
 - **Collapsible Accordion Sidebar UI**: Collapse or expand the **ACTIVE SESSIONS** and **PROFILES** sidebar sections with persistent `localStorage` states. When PROFILES is collapsed, the ACTIVE SESSIONS list dynamically expands to utilize all remaining vertical space.
 - **Integrated Git Dashboard (pure Go, no system git required)**: Detects the working directory of the active terminal pane and shows branch status, uncommitted files (with staging state), and commit history — with staging/unstaging, commits, Fetch/Pull/Push, branch switching, and per-file diff previews. Diff previews and commit details open in a **separate popup window** with **line-level syntax highlighting** (added/removed/hunk lines are color-coded).
 - **SSH Address Book & Quick Connect**: A per-pane extension toolbar (visible while holding `Ctrl`) provides one-click SSH connections through your configured SSH client. The encrypted address book (stored in `~/.pmux/ssh.conf`) supports password-protected Export/Import for migrating data between machines.
+- **Per-Workdir Notes with Rich Text Editing**: Open the Notes popup (📝 button in the top toolbar) to jot down memos scoped to the active pane's working directory. Each workdir keeps its own list of multiple notes (stored as JSON under `~/.pmux/note/`), with a default note that is always present. The Quill-based WYSIWYG toolbar provides font size, headings, bold/italic/underline/strikethrough, text & background colors, ordered/bullet lists, alignment, blockquote, code blocks, links, and format clearing. Notes auto-save while you type.
 
 ---
 
@@ -136,7 +137,7 @@ Because `ssh.conf` is bound to your Windows user account and machine, moving dat
 | Layer | Technologies Used |
 | :--- | :--- |
 | **Backend & Core** | Go (Golang), Wails v2, `coder/websocket` (v1.8.15), Windows ConPTY API |
-| **Frontend UI** | HTML5, Vanilla CSS3 (Custom Theme Design System), JavaScript (ES6+) |
+| **Frontend UI** | HTML5, Vanilla CSS3 (Custom Theme Design System), JavaScript (ES6+), Quill v2 (rich text editor) |
 | **Terminal Renderer** | Xterm.js (Fit Addon, Canvas Addon, WebGL Addon) |
 
 ---
@@ -188,6 +189,13 @@ The compiled executable will be located in the `build/bin/` directory.
 - **Send `^V` Control Character (Vim Visual Block / Bash Literal Next)**:
   - To prevent conflicts with Windows clipboard paste shortcuts, the terminal control character **`^V` (`ASCII 0x16`)** is mapped to **`Alt + V`**.
   - In Vim, press **`Alt + V`** to enter Visual Block mode, or in Bash to input literal control characters (Literal Next).
+
+### 5. Notes (Per-Workdir Memo)
+- Click the **📝 Notes** button in the top toolbar to open the Notes popup for the active pane's working directory.
+- Notes are stored **per working directory** — each workdir gets its own note list, saved to `~/.pmux/note/<hash>.json`. Opening Notes on a workdir with no notes automatically creates a default note, and deleting all notes always leaves one empty note behind.
+- Click **➕ New Note** to add a note, click a note in the left list to switch to it, edit its title in the title field, or hover over a note and click **✖** to delete it.
+- Format text with the toolbar: font size, headings (H1–H6), bold/italic/underline/strikethrough, text & background colors, ordered/bullet lists, alignment, blockquote, code block, link, and clear formatting.
+- Notes auto-save ~0.5 seconds after you stop typing (and when the popup is closed with the ✖ button). Text selection & copying work normally in the editor.
 
 ---
 

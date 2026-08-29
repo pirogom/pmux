@@ -21,6 +21,7 @@
 - **접고 펼치는 사이드바 아코디언 UI (Collapsible Accordion)**: 사이드바의 **ACTIVE SESSIONS** 및 **PROFILES** 섹션을 접고 펼칠 수 있으며 `localStorage`에 상태가 보존됨. PROFILES 섹션을 접으면 ACTIVE SESSIONS 목록이 남은 수직 공간을 100% 가득 활용하는 유연한 높이 동적 확장 기능 제공.
 - **통합 Git 대시보드 (순수 Go, 시스템 git 불필요)**: 현재 활성화된 터미널 Pane의 작업 디렉터리를 자동 감지하여 브랜치 상태, 커밋되지 않은 파일(스테이징 상태 구분), 커밋 로그를 표시하고, 스테이징/언스테이징, 커밋, Fetch/Pull/Push, 브랜치 체크아웃, 파일별 Diff 미리보기를 지원합니다. Diff 미리보기와 커밋 상세는 **별도 팝업 창**으로 열리며 **줄 단위 문법 하이라이트**(추가/삭제/헌크 라인 색상 구분)가 적용됩니다.
 - **SSH 주소록 및 원클릭 접속 (SSH Address Book & Quick Connect)**: Pane별 확장 툴바(`Ctrl` 키를 누르면 표시)에서 설정된 SSH 클라이언트로 원클릭 SSH 접속이 가능합니다. 암호화된 주소록(`~/.pmux/ssh.conf`)을 제공하며, 다른 기기로의 데이터 이전을 위한 비밀번호 보호 Export/Import를 지원합니다.
+- **작업 폴더별 노트 (Quill 리치 텍스트 편집기)**: 상단 툴바의 **📝 Notes** 버튼으로 현재 활성 Pane의 작업 디렉터리에 종속된 메모를 작성할 수 있습니다. 작업 폴더별로 여러 개의 노트를 관리하며(`~/.pmux/note/`에 JSON 저장), 기본 노트가 항상 하나 존재합니다. Quill 기반 WYSIWYG 툴바로 폰트 크기, 헤딩, Bold/Italic/Underline/취소선, 텍스트/배경 색상, 순서형/불릿 목록, 정렬, 인용구, 코드 블록, 링크, 서식 제거를 지원하며, 입력 중 자동 저장됩니다.
 
 ---
 
@@ -139,7 +140,7 @@ SSH 원격 접속 시에는 MSYS2 내장 `ssh` 대신 **Windows 기본 내장 Op
 | 레이어 | 사용 기술 |
 | :--- | :--- |
 | **백엔드 & 코어** | Go (Golang), Wails v2, `coder/websocket` (v1.8.15), Windows ConPTY API |
-| **프론트엔드 UI** | HTML5, Vanilla CSS3 (Custom Theme Design System), JavaScript (ES6+) |
+| **프론트엔드 UI** | HTML5, Vanilla CSS3 (Custom Theme Design System), JavaScript (ES6+), Quill v2 (리치 텍스트 편집기) |
 | **터미널 렌더러** | Xterm.js (Fit Addon, Canvas Addon, WebGL Addon) |
 
 ---
@@ -191,6 +192,13 @@ wails build
 - **제어 문자 `^V` 전송 (Vim Visual Block / Bash Literal Next)**:
   - Windows의 기본 붙여넣기 단축키와의 충돌을 피하기 위해, 터미널 제어 문자 **`^V` (`ASCII 0x16`)**는 **`Alt + V`**로 매핑되어 있습니다.
   - Vim에서 세로 블록 선택(Visual Block) 모드로 진입하거나, Bash에서 특수 키 이스케이프(Literal Next)를 입력할 때는 **`Alt + V`**를 누르면 됩니다.
+
+### 5. 노트 (작업 폴더별 메모)
+- 상단 툴바의 **📝 Notes** 버튼을 클릭하면 활성 Pane의 작업 디렉터리에 대한 노트 팝업이 열립니다.
+- 노트는 **작업 디렉터리별로 저장**됩니다 — 각 작업 폴더는 고유한 노트 목록을 가지며 `~/.pmux/note/<hash>.json`에 저장됩니다. 노트가 없는 작업 폴더에서 Notes를 열면 기본 노트가 자동 생성되고, 모든 노트를 삭제해도 빈 노트 1개가 항상 남습니다.
+- **➕ New Note** 버튼으로 노트를 추가하고, 왼쪽 목록에서 클릭하여 전환할 수 있으며, 제목 필드에서 노트 제목을 수정할 수 있습니다. 노트 위에 마우스를 올린 뒤 **✖** 버튼으로 삭제합니다.
+- 툴바로 텍스트를 서식 지정합니다: 폰트 크기, 헤딩(H1~H6), Bold/Italic/Underline/취소선, 텍스트/배경 색상, 순서형/불릿 목록, 정렬, 인용구, 코드 블록, 링크, 서식 제거.
+- 입력을 멈추면 약 0.5초 후 자동 저장되며, 팝업을 **✖** 버튼으로 닫을 때도 저장됩니다. 편집기에서도 텍스트 선택·복사가 정상 동작합니다.
 
 ---
 

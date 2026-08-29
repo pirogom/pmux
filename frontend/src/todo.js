@@ -191,7 +191,7 @@ function startTodoEdit(index) {
         contentEl.removeEventListener('blur', onBlur);
         contentEl.removeEventListener('keydown', onKeydown);
         if (commit) {
-            const text = contentEl.innerText.replace(/\n/g, '').trim();
+            const text = contentEl.innerText.replace(/\r\n/g, '\n').trim();
             if (text.length > 0) {
                 todoItems[index].content = text;
             }
@@ -201,7 +201,7 @@ function startTodoEdit(index) {
     };
     const onBlur = () => finish(true);
     const onKeydown = (e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             contentEl.blur();
         } else if (e.key === 'Escape') {

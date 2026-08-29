@@ -467,6 +467,36 @@ function renderGitDiff(container, text) {
 
 let diffMinimapRegions = [];
 
+// Preserve per-line newlines when copying a selection from the diff / commit
+// viewers (lines are rendered as block spans without literal \n characters).
+function handleGitDiffCopy(e) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const container = e.currentTarget;
+    if (!container || !container.contains(range.commonAncestorContainer)) return;
+
+    const parts = [];
+    container.querySelectorAll('.git-diff-line').forEach(line => {
+        if (!range.intersectsNode(line)) return;
+        const lineRange = document.createRange();
+        lineRange.selectNodeContents(line);
+        const clipped = range.cloneRange();
+        if (clipped.compareBoundaryPoints(Range.START_TO_START, lineRange) < 0) {
+            clipped.setStart(lineRange.startContainer, lineRange.startOffset);
+        }
+        if (clipped.compareBoundaryPoints(Range.END_TO_END, lineRange) > 0) {
+            clipped.setEnd(lineRange.endContainer, lineRange.endOffset);
+        }
+        parts.push(clipped.toString());
+    });
+    if (parts.length === 0) return;
+
+    e.clipboardData.setData('text/plain', parts.join('\n'));
+    e.preventDefault();
+    showToast('Copied to clipboard', 'info');
+}
+
 function clearDiffMinimap() {
     diffMinimapRegions = [];
     if (!dom.gitDiffMinimapEl) return;
@@ -676,6 +706,9 @@ export function initGitEvents() {
     if (dom.gitDiffContentEl) {
         dom.gitDiffContentEl.addEventListener('scroll', updateDiffMinimapViewport);
     }
+    [dom.gitDiffContentEl, dom.gitCommitContentEl].forEach(el => {
+        if (el) el.addEventListener('copy', handleGitDiffCopy);
+    });
     if (dom.gitDiffMinimapEl) {
         dom.gitDiffMinimapEl.addEventListener('click', (e) => {
             if (!dom.gitDiffContentEl) return;

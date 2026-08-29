@@ -1921,6 +1921,286 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
   padding: 16px 0;
 }
 
+/* Note Modal */
+#note-modal .modal-content {
+  width: 80%;
+  max-width: 1024px;
+  min-width: 640px;
+  height: 80%;
+  max-height: 80%;
+}
+
+.note-modal-body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.note-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.note-list-panel {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.note-add-btn {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-list-empty {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 12px 0;
+  line-height: 1.5;
+}
+
+.note-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: var(--text-main);
+}
+
+.note-list-item:hover {
+  background: var(--bg-hover);
+}
+
+.note-list-item.active {
+  border-color: var(--primary);
+  background: rgba(82, 139, 255, 0.12);
+  color: var(--text-bright);
+}
+
+.note-list-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-list-del {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.note-list-item:hover .note-list-del {
+  opacity: 1;
+}
+
+.note-list-del:hover {
+  color: var(--danger);
+  background: rgba(224, 108, 117, 0.15);
+}
+
+.note-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.note-title-input {
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  outline: none;
+}
+
+.note-title-input:focus {
+  border-color: var(--primary);
+}
+
+.note-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.note-toolbar .ql-toolbar.ql-snow {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text-main);
+}
+
+.note-toolbar .ql-toolbar.ql-snow .ql-formats {
+  margin-right: 12px;
+}
+
+.note-toolbar .ql-toolbar.ql-snow .ql-formats:last-child {
+  margin-right: 0;
+}
+
+/* Dark theme visibility for Quill toolbar controls */
+.note-toolbar .ql-snow .ql-stroke,
+.note-toolbar .ql-snow .ql-stroke-miter {
+  stroke: var(--text-main);
+}
+
+.note-toolbar .ql-snow .ql-fill,
+.note-toolbar .ql-snow .ql-stroke.ql-fill {
+  fill: var(--text-main);
+}
+
+.note-toolbar .ql-snow .ql-picker {
+  color: var(--text-main);
+}
+
+.note-toolbar .ql-snow .ql-picker-options {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.note-toolbar .ql-snow .ql-picker-label:hover,
+.note-toolbar .ql-snow .ql-picker-label.ql-active,
+.note-toolbar .ql-snow .ql-picker-item:hover,
+.note-toolbar .ql-snow .ql-picker-item.ql-selected {
+  color: var(--primary);
+}
+
+.note-toolbar .ql-snow button:hover .ql-stroke,
+.note-toolbar .ql-snow button.ql-active .ql-stroke,
+.note-toolbar .ql-snow .ql-picker-label:hover .ql-stroke,
+.note-toolbar .ql-snow .ql-picker-label.ql-active .ql-stroke {
+  stroke: var(--primary);
+}
+
+.note-toolbar .ql-snow button:hover .ql-fill,
+.note-toolbar .ql-snow button.ql-active .ql-fill,
+.note-toolbar .ql-snow .ql-picker-label:hover .ql-fill,
+.note-toolbar .ql-snow .ql-picker-label.ql-active .ql-fill {
+  fill: var(--primary);
+}
+
+.note-toolbar .ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-label,
+.note-toolbar .ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-options {
+  border-color: var(--border);
+}
+
+.note-toolbar .ql-snow .ql-picker.ql-expanded .ql-picker-label {
+  color: var(--text-muted);
+}
+
+.note-toolbar .ql-snow .ql-color-picker .ql-picker-item.ql-selected,
+.note-toolbar .ql-snow .ql-color-picker .ql-picker-item:hover {
+  border-color: #fff;
+}
+
+.note-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  color: var(--text-bright);
+}
+
+.note-content.ql-snow {
+  border: 1px solid var(--border);
+}
+
+.note-content:focus-within {
+  border-color: var(--primary);
+}
+
+.note-content .ql-container {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  font-size: 0.9rem;
+}
+
+.note-content .ql-editor {
+  min-height: 200px;
+  padding: 12px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-bright);
+  user-select: text;
+  overflow-y: auto;
+}
+
+#note-content .ql-editor.ql-blank::before {
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+.note-modal-body::-webkit-scrollbar,
+.note-list-panel::-webkit-scrollbar,
+.note-content .ql-editor::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.note-modal-body::-webkit-scrollbar-track,
+.note-list-panel::-webkit-scrollbar-track,
+.note-content .ql-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.note-modal-body::-webkit-scrollbar-thumb,
+.note-list-panel::-webkit-scrollbar-thumb,
+.note-content .ql-editor::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.note-modal-body::-webkit-scrollbar-thumb:hover,
+.note-list-panel::-webkit-scrollbar-thumb:hover,
+.note-content .ql-editor::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 @keyframes slideInRight {
   from {
     transform: translateX(100%);

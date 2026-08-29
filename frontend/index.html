@@ -69,6 +69,9 @@
                     <button id="btn-toggle-todo" class="btn btn-outline" title="Toggle Todo List">
                         <span>☑ Todo</span>
                     </button>
+                    <button id="btn-toggle-note" class="btn btn-outline" title="Toggle Notes">
+                        <span>📝 Notes</span>
+                    </button>
                     <button id="btn-toggle-git" class="btn btn-outline" title="Toggle Git Status Panel">
                         <span>🌿 Git</span>
                         <span id="git-btn-badge" class="git-btn-badge hidden">0</span>
@@ -154,6 +157,76 @@
             <div class="modal-footer">
                 <button id="btn-delete-all-todo" class="btn btn-secondary" title="Delete all todos">🗑 Delete All</button>
                 <button id="btn-add-todo" class="btn btn-primary">➕ Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Note Modal -->
+    <div id="note-modal" class="modal hidden">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3>📝 Notes</h3>
+                <button id="btn-close-note" class="icon-btn" title="Close Notes">✖</button>
+            </div>
+            <div class="modal-body note-modal-body">
+                <div class="note-layout">
+                    <div class="note-list-panel">
+                        <button id="btn-note-add" class="btn btn-primary note-add-btn">➕ New Note</button>
+                        <div id="note-list" class="note-list"></div>
+                    </div>
+                    <div class="note-editor">
+                        <input id="note-title" class="note-title-input" placeholder="Note title" spellcheck="false" />
+                        <div class="note-toolbar">
+                            <div id="note-toolbar" class="ql-toolbar">
+                                <span class="ql-formats">
+                                    <select class="ql-size" title="Font size">
+                                        <option selected>Normal</option>
+                                        <option value="12px">12px</option>
+                                        <option value="14px">14px</option>
+                                        <option value="16px">16px</option>
+                                        <option value="18px">18px</option>
+                                        <option value="20px">20px</option>
+                                        <option value="24px">24px</option>
+                                        <option value="28px">28px</option>
+                                    </select>
+                                </span>
+                                <span class="ql-formats">
+                                    <select class="ql-header" title="Heading">
+                                        <option value="1">Heading 1</option>
+                                        <option value="2">Heading 2</option>
+                                        <option value="3">Heading 3</option>
+                                        <option value="4">Heading 4</option>
+                                        <option value="5">Heading 5</option>
+                                        <option value="6">Heading 6</option>
+                                        <option selected>Normal</option>
+                                    </select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-bold" title="Bold"></button>
+                                    <button class="ql-italic" title="Italic"></button>
+                                    <button class="ql-underline" title="Underline"></button>
+                                    <button class="ql-strike" title="Strikethrough"></button>
+                                </span>
+                                <span class="ql-formats">
+                                    <select class="ql-color" title="Text color"></select>
+                                    <select class="ql-background" title="Background color"></select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-list" value="ordered" title="Ordered List"></button>
+                                    <button class="ql-list" value="bullet" title="Bullet List"></button>
+                                    <select class="ql-align" title="Alignment"></select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-blockquote" title="Blockquote"></button>
+                                    <button class="ql-code-block" title="Code Block"></button>
+                                    <button class="ql-link" title="Link"></button>
+                                    <button class="ql-clean" title="Clear formatting"></button>
+                                </span>
+                            </div>
+                        </div>
+                        <div id="note-content" class="note-content"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

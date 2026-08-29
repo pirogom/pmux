@@ -141,6 +141,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/config", s.handleGetConfig)
 	mux.HandleFunc("/api/todo/load", s.handleTodoLoad)
 	mux.HandleFunc("/api/todo/save", s.handleTodoSave)
+	mux.HandleFunc("/api/note/load", s.handleNoteLoad)
+	mux.HandleFunc("/api/note/save", s.handleNoteSave)
 	mux.HandleFunc("/api/server/kill", s.handleKillServer)
 	mux.HandleFunc("/ws/pane/", s.handleWSPane)
 	mux.HandleFunc("/ws/events", s.handleWSEvents)

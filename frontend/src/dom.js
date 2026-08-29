@@ -30,6 +30,11 @@ export const dom = {
     todoListEl: document.getElementById('todo-list'),
     btnAddTodoEl: document.getElementById('btn-add-todo'),
 
+    noteModalEl: document.getElementById('note-modal'),
+    noteListEl: document.getElementById('note-list'),
+    noteContentEl: document.getElementById('note-content'),
+    noteTitleInput: document.getElementById('note-title'),
+
     profileModalEl: document.getElementById('profile-modal'),
     profNameInput: document.getElementById('prof-name'),
     profCmdInput: document.getElementById('prof-cmd'),

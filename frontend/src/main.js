@@ -5,6 +5,7 @@ import { refreshConfigAndProfiles, initProfileEvents } from './profiles.js';
 import { refreshSessions, initWorkspaceEvents } from './workspace.js';
 import { initSshEvents } from './ssh.js';
 import { initTodoEvents } from './todo.js';
+import { initNoteEvents } from './note.js';
 import { startGitPollTimer, initGitEvents } from './git.js';
 
 // Initialization
@@ -16,6 +17,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     initProfileEvents();
     initSshEvents();
     initTodoEvents();
+    initNoteEvents();
     initGitEvents();
 
     const initConfig = async () => {

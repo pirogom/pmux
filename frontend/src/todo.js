@@ -228,15 +228,4 @@ export function initTodoEvents() {
     addClick('btn-close-todo', closeTodoModal);
     addClick('btn-add-todo', () => todoAddItem());
     addClick('btn-delete-all-todo', () => todoDeleteAll());
-
-    if (dom.todoModalEl) {
-        dom.todoModalEl.addEventListener('click', (e) => {
-            if (e.target === dom.todoModalEl) closeTodoModal();
-        });
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'Escape') return;
-        if (dom.todoModalEl && !dom.todoModalEl.classList.contains('hidden')) closeTodoModal();
-    });
 }

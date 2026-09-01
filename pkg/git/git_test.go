@@ -304,6 +304,95 @@ func contains(haystack, needle string) bool {
 	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
 }
 
+func setAutocrlf(t *testing.T, dir, value string) {
+	t.Helper()
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Raw.Section("core").SetOption("autocrlf", value)
+	if err := repo.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func blobHash(data string) plumbing.Hash {
+	h := plumbing.NewHasher(plumbing.BlobObject, int64(len(data)))
+	h.Write([]byte(data))
+	return h.Sum()
+}
+
+func TestGetStatus_Autocrlf_CrlfWorktreeIsClean(t *testing.T) {
+	dir := newTestRepo(t)
+	setAutocrlf(t, dir, "true")
+
+	// Simulate an autocrlf=true checkout: same text as the committed LF blob,
+	// but CRLF line endings on disk.
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello world\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res := GetStatus(dir)
+	if len(res.Changes) != 0 {
+		t.Fatalf("expected clean tree despite CRLF on disk, got %+v", res.Changes)
+	}
+}
+
+func TestGetStatus_AutocrlfDisabled_DetectsCrlfChange(t *testing.T) {
+	dir := newTestRepo(t)
+	setAutocrlf(t, dir, "false")
+
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello world\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res := GetStatus(dir)
+	if len(res.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %+v", res.Changes)
+	}
+	if res.Changes[0].Path != "hello.txt" || !res.Changes[0].Unstaged {
+		t.Fatalf("unexpected change: %+v", res.Changes[0])
+	}
+}
+
+func TestStage_Autocrlf_StoresLfBlob(t *testing.T) {
+	dir := newTestRepo(t)
+	setAutocrlf(t, dir, "true")
+
+	content := "staged crlf\r\nline2\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res := Stage(dir, []string{"hello.txt"})
+	if !res.Success {
+		t.Fatalf("stage failed: %s", res.Error)
+	}
+
+	expected := blobHash("staged crlf\nline2\n")
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := idx.Entry("hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Hash != expected {
+		t.Fatalf("index blob should be LF-normalized (%s), got %s", expected, entry.Hash)
+	}
+
+	st := GetStatus(dir)
+	if len(st.Changes) != 1 || !st.Changes[0].Staged || st.Changes[0].Unstaged {
+		t.Fatalf("expected 1 staged-only change, got %+v", st.Changes)
+	}
+}
+
 func indexOf(haystack, needle string) int {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {

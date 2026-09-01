@@ -5,7 +5,6 @@ package git
 import (
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -149,25 +148,12 @@ func isFileModeIgnored(repo *gogit.Repository) bool {
 	return runtime.GOOS == "windows"
 }
 
-// isSameContent checks if the file on disk matches the given blob hash.
+// isSameContent checks if the file on disk matches the given blob hash. The
+// hash is computed after the autocrlf clean filter (CRLF -> LF), so files that
+// only differ in line endings are not reported as modified.
 func isSameContent(bundle *repoBundle, path string, targetHash plumbing.Hash) bool {
-	f, err := bundle.worktree.Filesystem.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-
-	fi, err := bundle.worktree.Filesystem.Lstat(path)
-	if err != nil {
-		return false
-	}
-
-	h := plumbing.NewHasher(plumbing.BlobObject, fi.Size())
-	if _, err := io.Copy(h, f); err != nil {
-		return false
-	}
-
-	return h.Sum() == targetHash
+	_, h, ok := worktreeBlobData(bundle, path)
+	return ok && h == targetHash
 }
 
 // headFileHash looks up the blob hash for the given path in the HEAD commit tree.

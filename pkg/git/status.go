@@ -28,15 +28,20 @@ func GetStatus(workDir string) GitStatusResult {
 		return GitStatusResult{IsGitRepo: true, Branch: branch, Root: bundle.root, Error: err.Error()}
 	}
 
-	ignoreMode := isFileModeIgnored(bundle.repo)
+	// go-git's Status() hashes worktree files raw: it does not apply
+	// core.filemode (executable bit) or core.autocrlf (CRLF -> LF). When either
+	// setting is in effect, re-verify the flagged paths against the index using
+	// git-equivalent hashing so line-ending and mode-only differences do not
+	// show up as modifications.
+	recheck := isFileModeIgnored(bundle.repo) || isAutocrlfEnabled(bundle.repo)
 	var idx *index.Index
-	if ignoreMode {
+	if recheck {
 		idx, _ = bundle.repo.Storer.Index()
 	}
 
 	changes := make([]GitChange, 0, len(st))
 	for path, fs := range st {
-		if ignoreMode && idx != nil {
+		if recheck && idx != nil {
 			if fs.Worktree == gogit.Modified {
 				if entry, err := idx.Entry(path); err == nil && entry != nil {
 					if isSameContent(bundle, path, entry.Hash) {

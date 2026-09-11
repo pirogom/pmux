@@ -1185,6 +1185,30 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
   padding: 0 8px;
 }
 
+.git-diff-line[data-gutter]::before {
+  content: attr(data-gutter);
+  display: inline-block;
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  min-width: 5ch;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  background: var(--bg-card);
+}
+
+.git-diff-line.git-diff-add[data-gutter]::before {
+  background: linear-gradient(rgba(152, 195, 121, 0.14), rgba(152, 195, 121, 0.14)), var(--bg-card);
+}
+
+.git-diff-line.git-diff-del[data-gutter]::before {
+  background: linear-gradient(rgba(224, 108, 117, 0.14), rgba(224, 108, 117, 0.14)), var(--bg-card);
+}
+
 .git-diff-line.git-diff-add {
   background: rgba(152, 195, 121, 0.14);
   color: #b8d7a3;

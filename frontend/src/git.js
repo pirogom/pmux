@@ -617,23 +617,55 @@ function renderGitDiff(container, text) {
     container.textContent = '';
     if (!text) return;
     const lines = text.split('\n');
-    const frag = document.createDocumentFragment();
-    for (const line of lines) {
-        const span = document.createElement('span');
-        span.textContent = line;
-        span.className = 'git-diff-line';
-        if (/^@@ /.test(line)) {
-            span.classList.add('git-diff-hunk');
+
+    let oldLine = 0;
+    let newLine = 0;
+    let inHunk = false;
+    const entries = lines.map((line) => {
+        const entry = { line, cls: '', oldNum: null, newNum: null };
+        const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+        if (hunk) {
+            oldLine = parseInt(hunk[1], 10);
+            newLine = parseInt(hunk[2], 10);
+            inHunk = true;
+            entry.cls = 'git-diff-hunk';
         } else if (/^(diff |index |similarity |new file mode |deleted file mode |old mode |new mode |rename |copy |Binary files |\\)/.test(line)) {
-            span.classList.add('git-diff-meta');
-        } else if (/^--- /.test(line) || /^\+\+\+ /.test(line)) {
-            span.classList.add('git-diff-meta');
+            inHunk = false;
+            entry.cls = 'git-diff-meta';
+        } else if (!inHunk && (/^--- /.test(line) || /^\+\+\+ /.test(line))) {
+            entry.cls = 'git-diff-meta';
         } else if (/^\+/.test(line)) {
-            span.classList.add('git-diff-add');
+            entry.cls = 'git-diff-add';
+            entry.newNum = newLine++;
         } else if (/^-/.test(line)) {
-            span.classList.add('git-diff-del');
+            entry.cls = 'git-diff-del';
+            entry.oldNum = oldLine++;
         } else if (/^=== /.test(line)) {
-            span.classList.add('git-diff-sep');
+            entry.cls = 'git-diff-sep';
+        } else if (/^ /.test(line) && (oldLine > 0 || newLine > 0)) {
+            entry.oldNum = oldLine++;
+            entry.newNum = newLine++;
+        }
+        return entry;
+    });
+
+    let oldWidth = 0;
+    let newWidth = 0;
+    for (const entry of entries) {
+        if (entry.oldNum !== null) oldWidth = Math.max(oldWidth, String(entry.oldNum).length);
+        if (entry.newNum !== null) newWidth = Math.max(newWidth, String(entry.newNum).length);
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const entry of entries) {
+        const span = document.createElement('span');
+        span.textContent = entry.line;
+        span.className = 'git-diff-line';
+        if (entry.cls) span.classList.add(entry.cls);
+        if (entry.oldNum !== null || entry.newNum !== null) {
+            const oldPart = entry.oldNum !== null ? String(entry.oldNum).padStart(oldWidth) : ' '.repeat(oldWidth);
+            const newPart = entry.newNum !== null ? String(entry.newNum).padStart(newWidth) : ' '.repeat(newWidth);
+            span.dataset.gutter = `${oldPart} ${newPart}`;
         }
         frag.appendChild(span);
     }

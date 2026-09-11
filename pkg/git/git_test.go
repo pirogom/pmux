@@ -210,6 +210,9 @@ func TestGetDiff(t *testing.T) {
 	if !contains(res.Unstaged, "+hello world v3") || !contains(res.Unstaged, "-hello world") {
 		t.Fatalf("unexpected diff content:\n%s", res.Unstaged)
 	}
+	if !contains(res.Unstaged, "@@ -1,1 +1,1 @@") {
+		t.Fatalf("expected hunk header with line numbers, got:\n%s", res.Unstaged)
+	}
 
 	Stage(dir, []string{"hello.txt"})
 	res = GetDiff(dir, "hello.txt")

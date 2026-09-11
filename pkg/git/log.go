@@ -273,7 +273,25 @@ func renderDiff(diffs []diffmatchpatch.Diff) string {
 		return ""
 	}
 
+	oldCount, newCount := 0, 0
+	for _, d := range diffs {
+		lines := strings.Split(d.Text, "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		switch d.Type {
+		case diffmatchpatch.DiffDelete:
+			oldCount += len(lines)
+		case diffmatchpatch.DiffInsert:
+			newCount += len(lines)
+		default:
+			oldCount += len(lines)
+			newCount += len(lines)
+		}
+	}
+
 	var b strings.Builder
+	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", oldCount, newCount)
 	for _, d := range diffs {
 		prefix := " "
 		switch d.Type {

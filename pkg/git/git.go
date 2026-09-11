@@ -46,6 +46,14 @@ type GitCommit struct {
 	IsHead    bool     `json:"isHead"`
 }
 
+// GitLogPage is one page of commit history for cursor-based pagination.
+// NextCursor is the hash to pass as "before" to fetch the following page.
+type GitLogPage struct {
+	Commits    []GitCommit `json:"commits"`
+	HasMore    bool        `json:"hasMore"`
+	NextCursor string      `json:"nextCursor,omitempty"`
+}
+
 // GitBranch is a local branch.
 type GitBranch struct {
 	Name     string `json:"name"`

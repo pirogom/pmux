@@ -50,8 +50,8 @@ export function GetGitDiff(arg1, arg2) {
   return window['go']['main']['App']['GetGitDiff'](arg1, arg2);
 }
 
-export function GetGitLog(arg1, arg2) {
-  return window['go']['main']['App']['GetGitLog'](arg1, arg2);
+export function GetGitLog(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetGitLog'](arg1, arg2, arg3);
 }
 
 export function GetGitRemotes(arg1) {

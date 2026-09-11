@@ -29,7 +29,7 @@ export function GetGitCommitDetail(arg1:string,arg2:string):Promise<git.GitCommi
 
 export function GetGitDiff(arg1:string,arg2:string):Promise<git.GitDiffResult>;
 
-export function GetGitLog(arg1:string,arg2:number):Promise<Array<git.GitCommit>>;
+export function GetGitLog(arg1:string,arg2:number,arg3:string):Promise<git.GitLogPage>;
 
 export function GetGitRemotes(arg1:string):Promise<Array<git.GitRemote>>;
 

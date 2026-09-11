@@ -598,18 +598,19 @@ func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGitLog(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	dir := r.URL.Query().Get("dir")
+	before := r.URL.Query().Get("before")
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			limit = n
 		}
 	}
-	commits, err := git.GetLog(dir, limit)
+	page, err := git.GetLogPage(dir, limit, before)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(commits)
+	_ = json.NewEncoder(w).Encode(page)
 }
 
 func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {

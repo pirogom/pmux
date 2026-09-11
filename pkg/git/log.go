@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,43 +18,71 @@ import (
 
 // GetLog returns up to limit commits reachable from HEAD, most recent first.
 func GetLog(workDir string, limit int) ([]GitCommit, error) {
+	page, err := GetLogPage(workDir, limit, "")
+	if err != nil {
+		return nil, err
+	}
+	return page.Commits, nil
+}
+
+// GetLogPage returns one page of up to limit commits reachable from HEAD, most
+// recent first. An empty before starts at HEAD. Otherwise the full history is
+// traversed from HEAD and commits are returned after the one whose hash is
+// before (the previous page's NextCursor). Traversing from HEAD keeps the
+// ordering consistent across merge histories and stable while new commits are
+// being added.
+func GetLogPage(workDir string, limit int, before string) (GitLogPage, error) {
+	page := GitLogPage{Commits: []GitCommit{}}
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
+	if before != "" && !plumbing.IsHash(before) {
+		return page, fmt.Errorf("invalid commit cursor %q", before)
+	}
 	bundle, err := openRepo(workDir)
 	if err != nil {
-		return nil, err
+		return page, err
 	}
 
 	head, err := bundle.repo.Head()
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			return []GitCommit{}, nil
+			return page, nil
 		}
-		return nil, err
+		return page, err
 	}
+	headHash := head.Hash().String()
 
 	iter, err := bundle.repo.Log(&gogit.LogOptions{
 		From:  head.Hash(),
 		Order: gogit.LogOrderCommitterTime,
 	})
 	if err != nil {
-		return nil, err
+		return page, err
 	}
 	defer iter.Close()
 
 	refMap := branchRefMap(bundle)
 
-	commits := make([]GitCommit, 0, limit)
-	for i := 0; i < limit; i++ {
+	// Skip commits until the cursor is found, then collect one extra commit to
+	// detect whether more history is available.
+	skipTo := before
+	commits := make([]GitCommit, 0, limit+1)
+	for len(commits) <= limit {
 		c, err := iter.Next()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return commits, err
+			return page, err
 		}
 		hash := c.Hash.String()
+		if skipTo != "" {
+			if hash == skipTo {
+				skipTo = ""
+			}
+			continue
+		}
 		short := hash
 		if len(short) > 7 {
 			short = short[:7]
@@ -68,10 +97,20 @@ func GetLog(workDir string, limit int) ([]GitCommit, error) {
 			Message:   msg,
 			Subject:   subjectLine(msg),
 			Refs:      refMap[hash],
-			IsHead:    i == 0,
+			IsHead:    hash == headHash,
 		})
 	}
-	return commits, nil
+	if skipTo != "" {
+		return page, fmt.Errorf("commit cursor %q not found in history", before)
+	}
+
+	if len(commits) > limit {
+		commits = commits[:limit]
+		page.HasMore = true
+		page.NextCursor = commits[limit-1].Hash
+	}
+	page.Commits = commits
+	return page, nil
 }
 
 // GetDiff returns the staged and unstaged diff for a single path.

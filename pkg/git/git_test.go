@@ -1,9 +1,11 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -297,6 +299,226 @@ func TestNotGitRepo(t *testing.T) {
 	}
 	if _, err := GetLog(dir, 10); err == nil {
 		t.Fatalf("expected error for non-repo")
+	}
+}
+
+// addTestCommits appends n linear commits with strictly increasing committer
+// timestamps so log ordering is deterministic.
+func addTestCommits(t *testing.T, dir string, n int) {
+	t.Helper()
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Duration(n) * time.Minute)
+	for i := 0; i < n; i++ {
+		if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte(fmt.Sprintf("change %d\n", i)), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := wt.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
+			t.Fatal(err)
+		}
+		sig := &object.Signature{Name: "Test User", Email: "test@example.com", When: base.Add(time.Duration(i) * time.Minute)}
+		if _, err := wt.Commit(fmt.Sprintf("commit %d", i), &gogit.CommitOptions{Author: sig}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestGetLogPage_Pagination(t *testing.T) {
+	dir := newTestRepo(t)
+	addTestCommits(t, dir, 5) // initial commit + 5 = 6 total
+
+	var all []GitCommit
+	cursor := ""
+	pages := 0
+	for {
+		page, err := GetLogPage(dir, 2, cursor)
+		if err != nil {
+			t.Fatalf("GetLogPage(cursor=%q): %v", cursor, err)
+		}
+		if len(page.Commits) > 2 {
+			t.Fatalf("page larger than limit: %+v", page.Commits)
+		}
+		all = append(all, page.Commits...)
+		pages++
+		if !page.HasMore {
+			if page.NextCursor != "" {
+				t.Fatalf("NextCursor set without HasMore")
+			}
+			break
+		}
+		if page.NextCursor == "" {
+			t.Fatalf("HasMore without NextCursor")
+		}
+		if page.NextCursor == cursor {
+			t.Fatalf("cursor did not advance")
+		}
+		cursor = page.NextCursor
+		if pages > 10 {
+			t.Fatalf("too many pages")
+		}
+	}
+
+	if pages != 3 {
+		t.Fatalf("expected 3 pages, got %d", pages)
+	}
+	if len(all) != 6 {
+		t.Fatalf("expected 6 commits across pages, got %d", len(all))
+	}
+
+	seen := map[string]bool{}
+	for _, c := range all {
+		if seen[c.Hash] {
+			t.Fatalf("duplicate commit %s", c.Hash)
+		}
+		seen[c.Hash] = true
+	}
+	if all[0].Subject != "commit 4" || !all[0].IsHead {
+		t.Fatalf("unexpected first commit: %+v", all[0])
+	}
+	for _, c := range all[1:] {
+		if c.IsHead {
+			t.Fatalf("only the first commit should be marked head: %+v", c)
+		}
+	}
+	if last := all[len(all)-1]; last.Subject != "initial commit" {
+		t.Fatalf("unexpected last commit: %+v", last)
+	}
+}
+
+func TestGetLogPage_EmptyRepo(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := gogit.PlainInit(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	page, err := GetLogPage(dir, 10, "")
+	if err != nil {
+		t.Fatalf("GetLogPage: %v", err)
+	}
+	if len(page.Commits) != 0 || page.HasMore || page.NextCursor != "" {
+		t.Fatalf("unexpected page: %+v", page)
+	}
+}
+
+func TestGetLogPage_InvalidCursor(t *testing.T) {
+	dir := newTestRepo(t)
+	if _, err := GetLogPage(dir, 10, "not-a-hash"); err == nil {
+		t.Fatalf("expected error for malformed cursor")
+	}
+	missing := "0000000000000000000000000000000000000000"
+	if _, err := GetLogPage(dir, 10, missing); err == nil {
+		t.Fatalf("expected error for cursor not present in history")
+	}
+}
+
+func TestGetLogPage_MergeHistory(t *testing.T) {
+	dir := newTestRepo(t)
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour)
+
+	// feature branch commit C, older than master's commit B
+	if err := wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName("feature"),
+		Create: true,
+		Hash:   head.Hash(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feature\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := wt.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	cSig := &object.Signature{Name: "Test User", Email: "test@example.com", When: base.Add(1 * time.Minute)}
+	cHash, err := wt.Commit("feature commit", &gogit.CommitOptions{Author: cSig})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// back on the original branch: commit B, newer than C
+	if err := wt.Checkout(&gogit.CheckoutOptions{Branch: head.Name()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "master.txt"), []byte("master\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := wt.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	bSig := &object.Signature{Name: "Test User", Email: "test@example.com", When: base.Add(2 * time.Minute)}
+	bHash, err := wt.Commit("master commit", &gogit.CommitOptions{Author: bSig})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// merge commit M with parents B (first) and C
+	bCommit, err := repo.CommitObject(bHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mSig := object.Signature{Name: "Test User", Email: "test@example.com", When: base.Add(3 * time.Minute)}
+	merge := &object.Commit{
+		Author:       mSig,
+		Committer:    mSig,
+		Message:      "merge feature",
+		TreeHash:     bCommit.TreeHash,
+		ParentHashes: []plumbing.Hash{bHash, cHash},
+	}
+	obj := repo.Storer.NewEncodedObject()
+	if err := merge.Encode(obj); err != nil {
+		t.Fatal(err)
+	}
+	mHash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(head.Name(), mHash)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Paginate one commit at a time; the merge side branch must not be skipped.
+	var all []GitCommit
+	cursor := ""
+	for i := 0; i < 10; i++ {
+		page, err := GetLogPage(dir, 1, cursor)
+		if err != nil {
+			t.Fatalf("GetLogPage(cursor=%q): %v", cursor, err)
+		}
+		all = append(all, page.Commits...)
+		if !page.HasMore {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if len(all) != 4 {
+		t.Fatalf("expected 4 commits, got %d: %+v", len(all), all)
+	}
+	seen := map[string]bool{}
+	for _, c := range all {
+		if seen[c.Hash] {
+			t.Fatalf("duplicate commit %s", c.Hash)
+		}
+		seen[c.Hash] = true
+	}
+	if !seen[cHash.String()] {
+		t.Fatalf("merge side branch commit missing from paginated history")
 	}
 }
 

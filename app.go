@@ -265,8 +265,8 @@ func (a *App) GitStageAll(workDir string) git.GitOpResult {
 	return git.StageAll(workDir)
 }
 
-func (a *App) GetGitLog(workDir string, limit int) ([]git.GitCommit, error) {
-	return git.GetLog(workDir, limit)
+func (a *App) GetGitLog(workDir string, limit int, before string) (git.GitLogPage, error) {
+	return git.GetLogPage(workDir, limit, before)
 }
 
 func (a *App) GetGitDiff(workDir, path string) git.GitDiffResult {

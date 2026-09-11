@@ -5,6 +5,33 @@ import { showToast } from './ui.js';
 
 let gitPollTimer = null;
 
+const GIT_LOG_PAGE_SIZE = 30;
+
+const gitLogState = {
+    workDir: '',
+    commits: [],
+    nextCursor: '',
+    hasMore: false,
+    headHash: '',
+    loading: false,
+    error: false,
+    observer: null,
+};
+let gitLogRequestSeq = 0;
+let gitLogForceReload = false;
+
+function clearGitLogState() {
+    gitLogRequestSeq++;
+    gitLogState.workDir = '';
+    gitLogState.commits = [];
+    gitLogState.nextCursor = '';
+    gitLogState.hasMore = false;
+    gitLogState.headHash = '';
+    gitLogState.loading = false;
+    gitLogState.error = false;
+    if (gitLogState.observer) gitLogState.observer.disconnect();
+}
+
 export function startGitPollTimer(seconds) {
     if (gitPollTimer) {
         clearInterval(gitPollTimer);
@@ -142,7 +169,7 @@ export async function updateGitStatus() {
     }
 
     renderGitBranches(workDir, res.branch);
-    renderGitLog(workDir);
+    refreshGitLog(workDir);
 }
 
 function renderGitEmpty(msg) {
@@ -151,6 +178,7 @@ function renderGitEmpty(msg) {
     if (dom.gitLogContainerEl) dom.gitLogContainerEl.innerHTML = '';
     if (dom.gitStagedCountEl) dom.gitStagedCountEl.textContent = '';
     if (dom.gitChangesCountEl) dom.gitChangesCountEl.textContent = '';
+    clearGitLogState();
 }
 
 // --- Git API calls (Wails bindings with HTTP API fallback) ---
@@ -200,9 +228,11 @@ async function callGitCheckout(workDir, branch) {
     return await apiPost('/api/git/checkout', { workDir, branch });
 }
 
-async function callGitLog(workDir) {
-    if (isWails()) return await window.go.main.App.GetGitLog(workDir, 30);
-    return await apiGet(`/api/git/log?dir=${encodeURIComponent(workDir)}&limit=30`);
+async function callGitLog(workDir, limit, before) {
+    if (isWails()) return await window.go.main.App.GetGitLog(workDir, limit, before || '');
+    let path = `/api/git/log?dir=${encodeURIComponent(workDir)}&limit=${limit}`;
+    if (before) path += `&before=${encodeURIComponent(before)}`;
+    return await apiGet(path);
 }
 
 async function callGitBranches(workDir) {
@@ -386,56 +416,201 @@ async function renderGitBranches(workDir, currentBranch) {
     }
 }
 
-async function renderGitLog(workDir) {
+function createGitLogItem(workDir, c) {
+    const itemEl = document.createElement('div');
+    itemEl.className = 'git-log-item' + (c.isHead ? ' is-head' : '');
+
+    const top = document.createElement('div');
+    top.className = 'git-log-top';
+
+    const hashEl = document.createElement('span');
+    hashEl.className = 'git-log-hash';
+    hashEl.textContent = c.shortHash;
+    hashEl.title = `View commit detail: ${c.hash}`;
+    hashEl.addEventListener('click', () => showCommitDetail(workDir, c.hash));
+    top.appendChild(hashEl);
+
+    if (c.refs && c.refs.length > 0) {
+        const refsEl = document.createElement('span');
+        refsEl.className = 'git-log-refs';
+        refsEl.textContent = c.refs.join(', ');
+        top.appendChild(refsEl);
+    }
+    itemEl.appendChild(top);
+
+    const msgEl = document.createElement('div');
+    msgEl.className = 'git-log-msg';
+    msgEl.textContent = c.subject;
+    itemEl.appendChild(msgEl);
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'git-log-meta';
+    metaEl.textContent = `${c.author} · ${c.date}`;
+    itemEl.appendChild(metaEl);
+
+    return itemEl;
+}
+
+function appendGitLogItems(workDir, commits) {
+    const frag = document.createDocumentFragment();
+    commits.forEach(c => frag.appendChild(createGitLogItem(workDir, c)));
+    const footer = dom.gitLogContainerEl.querySelector('.git-log-footer');
+    if (footer) dom.gitLogContainerEl.insertBefore(frag, footer);
+    else dom.gitLogContainerEl.appendChild(frag);
+}
+
+function ensureGitLogObserver() {
+    if (typeof IntersectionObserver === 'undefined' || !dom.gitLogContainerEl) return;
+    const footer = dom.gitLogContainerEl.querySelector('.git-log-footer');
+    if (!footer) return;
+    if (!gitLogState.observer) {
+        gitLogState.observer = new IntersectionObserver((entries) => {
+            if (!gitLogState.hasMore || gitLogState.loading || gitLogState.error) return;
+            if (entries.some(e => e.isIntersecting)) loadMoreGitLog();
+        }, { root: dom.gitLogContainerEl.closest('.git-panel-body'), rootMargin: '80px' });
+    }
+    gitLogState.observer.disconnect();
+    gitLogState.observer.observe(footer);
+}
+
+function renderGitLogFooter() {
     if (!dom.gitLogContainerEl) return;
-    let commits = [];
-    try {
-        commits = await callGitLog(workDir);
-    } catch (e) {
+    let footer = dom.gitLogContainerEl.querySelector('.git-log-footer');
+    if (!footer) {
+        footer = document.createElement('div');
+        footer.className = 'git-log-footer';
+        dom.gitLogContainerEl.appendChild(footer);
+    }
+    footer.textContent = '';
+    if (gitLogState.loading) {
+        const status = document.createElement('span');
+        status.className = 'git-log-footer-status';
+        status.textContent = 'Loading…';
+        footer.appendChild(status);
         return;
     }
-    if (!Array.isArray(commits)) return;
+    if (gitLogState.error) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'git-log-footer-btn';
+        retry.textContent = 'Failed to load. Retry';
+        retry.addEventListener('click', retryGitLog);
+        footer.appendChild(retry);
+        return;
+    }
+    if (gitLogState.hasMore) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'git-log-footer-btn';
+        more.textContent = 'Load more';
+        more.addEventListener('click', () => loadMoreGitLog());
+        footer.appendChild(more);
+    } else if (gitLogState.commits.length > 0) {
+        const status = document.createElement('span');
+        status.className = 'git-log-footer-status';
+        status.textContent = 'End of history';
+        footer.appendChild(status);
+    }
+    ensureGitLogObserver();
+}
 
+function renderGitLogItems(workDir) {
+    if (!dom.gitLogContainerEl) return;
     dom.gitLogContainerEl.innerHTML = '';
-    if (commits.length === 0) {
+    if (gitLogState.commits.length === 0) {
         dom.gitLogContainerEl.innerHTML = '<div class="git-empty">No commits yet.</div>';
         return;
     }
+    appendGitLogItems(workDir, gitLogState.commits);
+    renderGitLogFooter();
+}
 
-    commits.forEach(c => {
-        const itemEl = document.createElement('div');
-        itemEl.className = 'git-log-item' + (c.isHead ? ' is-head' : '');
+function applyGitLogPage(workDir, page) {
+    gitLogState.workDir = workDir;
+    gitLogState.commits = Array.isArray(page.commits) ? page.commits : [];
+    gitLogState.nextCursor = page.nextCursor || '';
+    gitLogState.hasMore = !!page.hasMore;
+    gitLogState.headHash = gitLogState.commits[0] ? gitLogState.commits[0].hash : '';
+    gitLogState.error = false;
+    renderGitLogItems(workDir);
+}
 
-        const top = document.createElement('div');
-        top.className = 'git-log-top';
+function retryGitLog() {
+    // Reload from the first page: a failed "load more" is usually caused by a
+    // rewritten history (stale cursor), which only a reset can recover from.
+    resetGitLog(gitLogState.workDir);
+}
 
-        const hashEl = document.createElement('span');
-        hashEl.className = 'git-log-hash';
-        hashEl.textContent = c.shortHash;
-        hashEl.title = `View commit detail: ${c.hash}`;
-        hashEl.addEventListener('click', () => showCommitDetail(workDir, c.hash));
-        top.appendChild(hashEl);
+async function resetGitLog(workDir) {
+    if (!workDir || !dom.gitLogContainerEl) return;
+    const seq = ++gitLogRequestSeq;
+    gitLogState.workDir = workDir;
+    gitLogState.loading = true;
+    gitLogState.error = false;
+    renderGitLogFooter();
+    try {
+        const page = await callGitLog(workDir, GIT_LOG_PAGE_SIZE, '');
+        if (seq !== gitLogRequestSeq) return;
+        gitLogState.loading = false;
+        applyGitLogPage(workDir, page);
+    } catch (e) {
+        if (seq !== gitLogRequestSeq) return;
+        gitLogState.loading = false;
+        gitLogState.error = true;
+        renderGitLogFooter();
+    }
+}
 
-        if (c.refs && c.refs.length > 0) {
-            const refsEl = document.createElement('span');
-            refsEl.className = 'git-log-refs';
-            refsEl.textContent = c.refs.join(', ');
-            top.appendChild(refsEl);
-        }
-        itemEl.appendChild(top);
+async function loadMoreGitLog() {
+    if (gitLogState.loading || !gitLogState.hasMore || !gitLogState.nextCursor || !gitLogState.workDir) return;
+    const workDir = gitLogState.workDir;
+    const cursor = gitLogState.nextCursor;
+    const seq = ++gitLogRequestSeq;
+    gitLogState.loading = true;
+    gitLogState.error = false;
+    renderGitLogFooter();
+    try {
+        const page = await callGitLog(workDir, GIT_LOG_PAGE_SIZE, cursor);
+        if (seq !== gitLogRequestSeq) return;
+        gitLogState.loading = false;
+        const commits = Array.isArray(page.commits) ? page.commits : [];
+        gitLogState.commits = gitLogState.commits.concat(commits);
+        gitLogState.nextCursor = page.nextCursor || '';
+        gitLogState.hasMore = !!page.hasMore;
+        appendGitLogItems(workDir, commits);
+        renderGitLogFooter();
+    } catch (e) {
+        if (seq !== gitLogRequestSeq) return;
+        gitLogState.loading = false;
+        gitLogState.error = true;
+        renderGitLogFooter();
+    }
+}
 
-        const msgEl = document.createElement('div');
-        msgEl.className = 'git-log-msg';
-        msgEl.textContent = c.subject;
-        itemEl.appendChild(msgEl);
+async function refreshGitLog(workDir) {
+    if (!dom.gitLogContainerEl) return;
+    if (gitLogForceReload) {
+        gitLogForceReload = false;
+        resetGitLog(workDir);
+        return;
+    }
+    if (gitLogState.workDir !== workDir) {
+        resetGitLog(workDir);
+        return;
+    }
+    if (gitLogState.loading) return;
 
-        const metaEl = document.createElement('div');
-        metaEl.className = 'git-log-meta';
-        metaEl.textContent = `${c.author} · ${c.date}`;
-        itemEl.appendChild(metaEl);
-
-        dom.gitLogContainerEl.appendChild(itemEl);
-    });
+    const seq = ++gitLogRequestSeq;
+    let page;
+    try {
+        page = await callGitLog(workDir, GIT_LOG_PAGE_SIZE, '');
+    } catch (e) {
+        return;
+    }
+    if (seq !== gitLogRequestSeq) return;
+    const headHash = page && Array.isArray(page.commits) && page.commits[0] ? page.commits[0].hash : '';
+    if (headHash === gitLogState.headHash) return;
+    applyGitLogPage(workDir, page);
 }
 
 function renderGitDiff(container, text) {
@@ -679,7 +854,10 @@ export function initGitEvents() {
         dom.gitPanelEl.classList.add('hidden');
     });
 
-    addClick('btn-git-refresh', updateGitStatus);
+    addClick('btn-git-refresh', () => {
+        gitLogForceReload = true;
+        updateGitStatus();
+    });
 
     // Git panel actions
     addClick('btn-git-fetch', () => gitRemoteAction('fetch'));

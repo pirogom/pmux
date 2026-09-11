@@ -1013,6 +1013,31 @@ body.ctrl-pressed .pane-element:hover .pane-toolbar {
   color: var(--text-muted);
 }
 
+.git-log-footer {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.git-log-footer-btn {
+  background: var(--bg-card);
+  color: var(--text-bright);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.git-log-footer-btn:hover {
+  background: var(--bg-card-hover);
+}
+
+.git-log-footer-status {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 /* Allow text selection and copy in git views */
 .git-changes-list,
 .git-log-list,

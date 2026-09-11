@@ -9,13 +9,14 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
 	github.com/skeema/knownhosts v1.3.1
-	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/wailsapp/wails/v2 v2.15.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.47.0
 )
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/bep/debounce v1.2.1 // indirect

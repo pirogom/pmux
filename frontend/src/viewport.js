@@ -1,6 +1,22 @@
 import { state } from './state.js';
 
 let reflowDebounceTimer = null;
+let resizeRedrawTimer = null;
+
+// scheduleResizeRedraw debounces a forced full repaint until a resize gesture
+// settles. A plain ConPTY resize only emits a reflow/partial repaint, which
+// can leave stale or duplicated lines in the client buffer for full-screen
+// TUI apps (claude, agy, ...). The same forced redraw used by the Refresh
+// Session Panes button resynchronizes the screen once resizing stops.
+function scheduleResizeRedraw() {
+    if (resizeRedrawTimer) {
+        clearTimeout(resizeRedrawTimer);
+    }
+    resizeRedrawTimer = setTimeout(() => {
+        resizeRedrawTimer = null;
+        reflowAllPanes(true, true);
+    }, 200);
+}
 
 // getCellSize returns the terminal's measured cell size in pixels, or null
 // until the renderer has computed its dimensions.
@@ -125,7 +141,11 @@ export function reflowAllPanes(forceSendResize = false, forceRedraw = false) {
                             paneObj.viewportRows = size.rows;
                             ws.send(JSON.stringify({ type: 'redraw', cols: size.cols, rows: size.rows }));
                         } else {
+                            const changed = size.cols !== paneObj.viewportCols || size.rows !== paneObj.viewportRows;
                             sendViewportResize(paneObj, forceSendResize);
+                            if (changed) {
+                                scheduleResizeRedraw();
+                            }
                         }
                     }
                 }

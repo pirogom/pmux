@@ -87,13 +87,3 @@ func GetStatus(workDir string) GitStatusResult {
 		Changes:   changes,
 	}
 }
-
-// GetRepoRoot returns the root directory of the repository containing workDir,
-// or workDir itself if no repository was found.
-func GetRepoRoot(workDir string) string {
-	bundle, err := openRepo(workDir)
-	if err != nil {
-		return workDir
-	}
-	return bundle.root
-}

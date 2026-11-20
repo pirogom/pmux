@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { refreshSessions, attachToSession, setActivePane, showEmptyState } from './workspace.js';
+import { refreshSessions, attachToSession, setActivePane, showEmptyState, layoutSignature } from './workspace.js';
 import { refreshConfigAndProfiles } from './profiles.js';
 import { applyGitPollInterval } from './git.js';
 import { serverWsUrl } from './api.js';
@@ -61,21 +61,26 @@ export function connectGlobalEventsWS() {
                     return;
                 }
 
+                // Remember the active session's layout before refreshing so
+                // unrelated session events (another session split/closed) do
+                // not tear down and re-render the workspace.
+                const prevActiveId = state.activeSession ? state.activeSession.id : null;
+                const prevSig = state.activeSession ? layoutSignature(state.activeSession.layout) : '';
+
                 refreshSessions().then(() => {
-                    if (state.activeSession) {
-                        const latestSess = state.sessions.find(s => s.id === state.activeSession.id);
-                        if (latestSess) {
-                            attachToSession(latestSess.id);
-                        } else if (state.sessions.length > 0) {
-                            attachToSession(state.sessions[0].id);
-                        } else {
-                            showEmptyState();
-                        }
-                    } else if (state.sessions.length > 0) {
-                        attachToSession(state.sessions[0].id);
-                    } else {
-                        showEmptyState();
+                    if (!state.activeSession) {
+                        if (state.sessions.length > 0) attachToSession(state.sessions[0].id);
+                        else showEmptyState();
+                        return;
                     }
+
+                    const activeId = state.activeSession.id;
+                    const activeSig = layoutSignature(state.activeSession.layout);
+                    if (activeId !== prevActiveId || activeSig !== prevSig) {
+                        attachToSession(activeId);
+                    }
+                    // Otherwise refreshSessions already updated the title and
+                    // session list; the terminal DOM is still valid.
                 });
             } else if (data.type === 'profiles_updated' || data.type === 'config_updated') {
                 if (data.type === 'config_updated' && data.data && data.data.gitPollInterval) {

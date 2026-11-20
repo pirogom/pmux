@@ -31,7 +31,6 @@ type Profile struct {
 	Args        []string         `json:"args"`
 	WorkDir     string           `json:"workDir"`
 	Env         []string         `json:"env"`
-	IsPreset    bool             `json:"isPreset"`
 	SavedLayout *SavedLayoutNode `json:"savedLayout,omitempty"`
 	Folder      string           `json:"folder,omitempty"`
 }
@@ -42,12 +41,10 @@ type ProfileFolder struct {
 }
 
 type Config struct {
-	DefaultProfileID string          `json:"defaultProfileId"`
-	Profiles         []Profile       `json:"profiles"`
-	ProfileFolders   []ProfileFolder `json:"profileFolders"`
-	ServerPort       int             `json:"serverPort"`
-	Theme            string          `json:"theme"`
-	GitPollInterval  int             `json:"gitPollInterval"`
+	Profiles        []Profile       `json:"profiles"`
+	ProfileFolders  []ProfileFolder `json:"profileFolders"`
+	ServerPort      int             `json:"serverPort"`
+	GitPollInterval int             `json:"gitPollInterval"`
 }
 
 // mu serializes config access inside this process. Cross-process access (the
@@ -79,15 +76,16 @@ func getConfigFile() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-// withFileLock runs fn while holding an exclusive cross-process lock on
-// ~/.pmux/config.lock. If the lock file cannot be created/locked (e.g. a
-// read-only home directory) fn still runs, protected by the in-process mutex.
-func withFileLock(fn func() error) error {
+// WithFileLock runs fn while holding an exclusive cross-process lock on
+// ~/.pmux/<name>. If the lock file cannot be created/locked (e.g. a read-only
+// home directory) fn still runs, protected by the in-process mutex of the
+// calling package.
+func WithFileLock(name string, fn func() error) error {
 	dir, err := GetConfigDir()
 	if err != nil {
 		return fn()
 	}
-	lockPath := filepath.Join(dir, "config.lock")
+	lockPath := filepath.Join(dir, name)
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fn()
@@ -100,10 +98,14 @@ func withFileLock(fn func() error) error {
 	return fn()
 }
 
+// withFileLock serializes access to config.json across processes.
+func withFileLock(fn func() error) error {
+	return WithFileLock("config.lock", fn)
+}
+
 func defaultConfig() *Config {
 	return &Config{
 		ServerPort:      4799,
-		Theme:           "dark",
 		GitPollInterval: 3,
 		Profiles:        []Profile{},
 		ProfileFolders:  []ProfileFolder{},
@@ -190,7 +192,7 @@ func loadLocked() (*Config, error) {
 	if cfg.GitPollInterval <= 0 {
 		cfg.GitPollInterval = 3
 	}
-	if cfg.ServerPort <= 0 {
+	if cfg.ServerPort < 1 || cfg.ServerPort > 65535 {
 		cfg.ServerPort = 4799
 	}
 	if cfg.Profiles == nil {
@@ -207,12 +209,6 @@ func SaveConfig(cfg *Config) error {
 	mu.Lock()
 	defer mu.Unlock()
 	return withFileLock(func() error { return saveLocked(cfg) })
-}
-
-// SaveConfigLocked is retained for callers that already hold the package
-// mutex (it is not safe to call from outside this package without Update).
-func SaveConfigLocked(cfg *Config) error {
-	return saveLocked(cfg)
 }
 
 // saveLocked writes the config atomically (temp file + rename) so a crash
@@ -288,6 +284,11 @@ func (cfg *Config) UpsertProfile(p Profile) {
 			}
 			if p.Folder == "" && existing.Folder != "" {
 				p.Folder = existing.Folder
+			}
+			// Partial updates from the UI do not include env, so keep the
+			// previously configured environment instead of wiping it.
+			if p.Env == nil && existing.Env != nil {
+				p.Env = existing.Env
 			}
 			cfg.Profiles[i] = p
 			return

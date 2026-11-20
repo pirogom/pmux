@@ -26,7 +26,16 @@ import (
 // to allocate named pipe POSIX pseudo-terminals that hang without terminal output.
 // TERM=xterm-256color ensures full-featured ANSI sequence negotiation for ssh, vim, etc.
 func paneEnv() []string {
-	env := os.Environ()
+	// Never leak daemon credentials into the shells (and therefore into every
+	// program the user runs inside pmux).
+	raw := os.Environ()
+	env := make([]string, 0, len(raw)+5)
+	for _, kv := range raw {
+		if strings.HasPrefix(strings.ToUpper(kv), "PMUX_TOKEN=") {
+			continue
+		}
+		env = append(env, kv)
+	}
 	env = append(env, "WT_SESSION="+uuid.NewString())
 
 	var hasMsys, hasCygwin, hasTerm, hasColorTerm bool
@@ -60,8 +69,10 @@ func paneEnv() []string {
 type SplitDirection string
 
 const (
-	SplitHorizontal SplitDirection = "horizontal" // 좌우 분할
-	SplitVertical   SplitDirection = "vertical"   // 상하 분할
+	// SplitHorizontal stacks panes vertically (top/bottom).
+	SplitHorizontal SplitDirection = "horizontal"
+	// SplitVertical places panes side by side (left/right).
+	SplitVertical SplitDirection = "vertical"
 )
 
 type LayoutNode struct {
@@ -84,16 +95,19 @@ type clientView struct {
 }
 
 type Pane struct {
-	ID          string                          `json:"id"`
-	SessionID   string                          `json:"sessionId"`
-	WorkDir     string                          `json:"workDir"`
-	Command     string                          `json:"command"`
-	Args        []string                        `json:"args"`
-	Cols        int                             `json:"cols"`
-	Rows        int                             `json:"rows"`
-	PTY         *conpty.ConPTY                  `json:"-"`
-	Buffer      *RingBuffer                     `json:"-"`
-	Clients     map[*websocket.Conn]*clientView `json:"-"`
+	ID        string                          `json:"id"`
+	SessionID string                          `json:"sessionId"`
+	WorkDir   string                          `json:"workDir"`
+	Command   string                          `json:"command"`
+	Args      []string                        `json:"args"`
+	Cols      int                             `json:"cols"`
+	Rows      int                             `json:"rows"`
+	PTY       *conpty.ConPTY                  `json:"-"`
+	Buffer    *RingBuffer                     `json:"-"`
+	Clients   map[*websocket.Conn]*clientView `json:"-"`
+	// profileEnv holds the profile-specific environment overrides, reused when
+	// splitting so child panes behave the same without sharing WT_SESSION.
+	profileEnv  []string
 	resizeTimer *time.Timer
 	inCh        chan []byte
 	inDone      chan struct{}
@@ -467,8 +481,7 @@ func (sm *SessionManager) notifyChange(eventType string, data interface{}) {
 }
 
 func (sm *SessionManager) CreateSession(profileID, name, command string, args []string, workDir string, cols, rows int) (*Session, *Pane, error) {
-	now := time.Now().UnixNano()
-	sessionID := fmt.Sprintf("sess_%d", now)
+	sessionID := "sess_" + uuid.NewString()
 
 	if name == "" {
 		sm.mu.RLock()
@@ -480,23 +493,26 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 	// heuristic could attach a session to the wrong profile).
 	var savedLayout *config.SavedLayoutNode
 	var matchedProfileID string
+	var profileEnv []string
 	if profileID != "" {
 		if cfg, err := config.LoadConfig(); err == nil && cfg != nil {
 			for _, prof := range cfg.Profiles {
 				if prof.ID == profileID {
 					matchedProfileID = prof.ID
 					savedLayout = prof.SavedLayout
+					profileEnv = prof.Env
 					break
 				}
 			}
 		}
 	}
+	env := append(paneEnv(), profileEnv...)
 
 	// 2. If a saved layout exists, reconstruct the multi-pane layout. ConPTY
 	// creation happens outside the manager lock so a slow shell startup does
 	// not block every other session API call.
 	if savedLayout != nil && len(savedLayout.Children) > 0 {
-		layoutTree, panes, firstPane, errBuild := sm.buildLayoutFromSaved(savedLayout, sessionID, cols, rows)
+		layoutTree, panes, firstPane, errBuild := sm.buildLayoutFromSaved(savedLayout, sessionID, cols, rows, profileEnv)
 		if errBuild == nil && layoutTree != nil && firstPane != nil {
 			sess := &Session{
 				ID:           sessionID,
@@ -508,6 +524,9 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 				Layout:       layoutTree,
 			}
 
+			for _, p := range panes {
+				p.profileEnv = profileEnv
+			}
 			sm.mu.Lock()
 			sm.sessions[sessionID] = sess
 			for id, p := range panes {
@@ -531,8 +550,8 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 	}
 
 	// 3. Default single-pane creation
-	paneID := fmt.Sprintf("pane_%d_1", now)
-	ptyInst, err := conpty.New(command, args, workDir, paneEnv(), cols, rows)
+	paneID := "pane_" + uuid.NewString()
+	ptyInst, err := conpty.New(command, args, workDir, env, cols, rows)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
@@ -540,6 +559,7 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 	pane := newPane(paneID, sessionID, workDir, command, args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
 		_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 	})
+	pane.profileEnv = profileEnv
 
 	sess := &Session{
 		ID:           sessionID,
@@ -566,30 +586,31 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 
 // buildLayoutFromSaved materializes a saved layout tree into live panes. It
 // does not touch SessionManager state so it can run without holding sm.mu.
-func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, sessionID string, cols, rows int) (*LayoutNode, map[string]*Pane, *Pane, error) {
+func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, sessionID string, cols, rows int, profileEnv []string) (*LayoutNode, map[string]*Pane, *Pane, error) {
 	panes := make(map[string]*Pane)
-	layout, firstPane, err := sm.buildLayoutNode(node, sessionID, panes, cols, rows)
+	layout, firstPane, err := sm.buildLayoutNode(node, sessionID, panes, cols, rows, profileEnv)
 	if err != nil {
 		return nil, panes, nil, err
 	}
 	return layout, panes, firstPane, nil
 }
 
-func (sm *SessionManager) buildLayoutNode(node *config.SavedLayoutNode, sessionID string, panes map[string]*Pane, cols, rows int) (*LayoutNode, *Pane, error) {
+func (sm *SessionManager) buildLayoutNode(node *config.SavedLayoutNode, sessionID string, panes map[string]*Pane, cols, rows int, profileEnv []string) (*LayoutNode, *Pane, error) {
 	if node == nil {
 		return nil, nil, nil
 	}
 
 	if len(node.Children) == 0 {
-		now := time.Now().UnixNano()
-		paneID := fmt.Sprintf("pane_%d_%d", now, len(panes)+1)
+		paneID := "pane_" + uuid.NewString()
 
 		cmd := node.Command
 		if cmd == "" {
 			cmd = "cmd.exe"
 		}
 
-		ptyInst, err := conpty.New(cmd, node.Args, node.WorkDir, paneEnv(), cols, rows)
+		// Every pane gets its own WT_SESSION marker, matching a fresh split.
+		env := append(paneEnv(), profileEnv...)
+		ptyInst, err := conpty.New(cmd, node.Args, node.WorkDir, env, cols, rows)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -606,7 +627,7 @@ func (sm *SessionManager) buildLayoutNode(node *config.SavedLayoutNode, sessionI
 	var firstPane *Pane
 
 	for _, childSaved := range node.Children {
-		childLayout, paneInst, err := sm.buildLayoutNode(childSaved, sessionID, panes, cols, rows)
+		childLayout, paneInst, err := sm.buildLayoutNode(childSaved, sessionID, panes, cols, rows, profileEnv)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -674,11 +695,13 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 	if workDir == "" {
 		workDir = parentPane.WorkDir
 	}
+	profileEnv := parentPane.profileEnv
 	sm.mu.RUnlock()
+	env := append(paneEnv(), profileEnv...)
 
-	paneID := fmt.Sprintf("pane_split_%d", time.Now().UnixNano())
+	paneID := "pane_split_" + uuid.NewString()
 
-	ptyInst, err := conpty.New(command, args, workDir, paneEnv(), cols, rows)
+	ptyInst, err := conpty.New(command, args, workDir, env, cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ConPTY: %w", err)
 	}
@@ -686,6 +709,7 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 	newPane := newPane(paneID, sessionID, workDir, command, args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
 		_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 	})
+	newPane.profileEnv = profileEnv
 
 	sm.mu.Lock()
 	sess, ok = sm.sessions[sessionID]
@@ -770,15 +794,23 @@ func (p *Pane) readLoop() {
 				p.modeTracker.Process(chunk)
 			}
 
-			// 3. Non-blocking broadcast to all active client channels
+			// 3. Non-blocking broadcast to all active client channels. A
+			// client that cannot keep up is disconnected instead of having
+			// output silently dropped: reconnecting replays the history
+			// buffer, which resynchronizes its terminal state.
+			var overflowed []*websocket.Conn
 			for _, cv := range p.Clients {
 				select {
 				case cv.ch <- chunk:
 				default:
-					// Channel is full: client writer will catch up and batch
+					overflowed = append(overflowed, cv.conn)
 				}
 			}
 			p.mu.Unlock()
+
+			for _, conn := range overflowed {
+				_ = conn.Close(websocket.StatusTryAgainLater, "terminal output overflow; resync required")
+			}
 		}
 		if err != nil {
 			exitCode, exitErr := p.PTY.ExitCode()
@@ -801,13 +833,63 @@ func (p *Pane) readLoop() {
 	}
 }
 
+// cloneLayout deep-copies a layout tree so callers can serialize it without
+// holding the session manager lock.
+func cloneLayout(n *LayoutNode) *LayoutNode {
+	if n == nil {
+		return nil
+	}
+	out := &LayoutNode{
+		ID:        n.ID,
+		Direction: n.Direction,
+		Ratio:     n.Ratio,
+	}
+	if len(n.Children) > 0 {
+		out.Children = make([]*LayoutNode, len(n.Children))
+		for i, child := range n.Children {
+			out.Children[i] = cloneLayout(child)
+		}
+	}
+	return out
+}
+
+// snapshotSessionLocked returns a lock-free copy of a session suitable for
+// JSON encoding after sm.mu is released. Copying is required because SplitPane
+// and ClosePane mutate the live maps and pane geometry concurrently with HTTP
+// handlers encoding the response.
+func snapshotSessionLocked(s *Session) *Session {
+	panes := make(map[string]*Pane, len(s.Panes))
+	for id, p := range s.Panes {
+		p.mu.Lock()
+		panes[id] = &Pane{
+			ID:        p.ID,
+			SessionID: p.SessionID,
+			WorkDir:   p.WorkDir,
+			Command:   p.Command,
+			Args:      append([]string(nil), p.Args...),
+			Cols:      p.Cols,
+			Rows:      p.Rows,
+		}
+		p.mu.Unlock()
+	}
+	return &Session{
+		ID:           s.ID,
+		Name:         s.Name,
+		ProfileID:    s.ProfileID,
+		CreatedAt:    s.CreatedAt,
+		Panes:        panes,
+		ActivePaneID: s.ActivePaneID,
+		Layout:       cloneLayout(s.Layout),
+	}
+}
+
 func (sm *SessionManager) ListSessions() []*Session {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	list := make([]*Session, 0, len(sm.sessions))
 	for _, s := range sm.sessions {
-		list = append(list, s)
+		list = append(list, snapshotSessionLocked(s))
 	}
 
 	sort.Slice(list, func(i, j int) bool {
@@ -956,6 +1038,41 @@ func (sm *SessionManager) CloseSession(sessionID string) error {
 
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "close-session"})
 	return nil
+}
+
+// CloseAll terminates every pane and session. It is used on daemon shutdown so
+// no ConPTY/root processes are left behind when the server exits.
+func (sm *SessionManager) CloseAll() {
+	type closingPane struct {
+		pane    *Pane
+		clients map[*websocket.Conn]*clientView
+	}
+
+	sm.mu.Lock()
+	closing := make([]closingPane, 0)
+	for _, sess := range sm.sessions {
+		for paneID, pane := range sess.Panes {
+			pane.CloseInput()
+			pane.mu.Lock()
+			clients := pane.Clients
+			pane.Clients = make(map[*websocket.Conn]*clientView)
+			pane.mu.Unlock()
+			closing = append(closing, closingPane{pane: pane, clients: clients})
+			delete(sm.panes, paneID)
+		}
+	}
+	sm.sessions = make(map[string]*Session)
+	sm.mu.Unlock()
+
+	for _, cp := range closing {
+		if cp.pane.PTY != nil {
+			cp.pane.PTY.Close()
+		}
+		for conn, cv := range cp.clients {
+			close(cv.ch)
+			_ = conn.Close(websocket.StatusNormalClosure, "server shutting down")
+		}
+	}
 }
 
 func (sm *SessionManager) SetActivePane(sessionID, paneID string) error {

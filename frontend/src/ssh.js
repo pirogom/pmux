@@ -11,6 +11,9 @@ const DEFAULT_SSH_CLIENT_PATH = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
 // user@host, host:port and ssh:// URLs.
 const SAFE_SSH_HOST_RE = /^[A-Za-z0-9._:@\/\[\]-]+$/;
 const SAFE_SSH_USER_RE = /^[A-Za-z0-9._-]+$/;
+// The client path is typed into the pane's shell, so it must not contain any
+// characters that could terminate the quoting or start a new command.
+const SAFE_SSH_CLIENT_PATH_RE = /^[^"&|<>^%\r\n]+$/;
 
 function validateSSHTarget(host, user) {
     if (!host) return 'Host address is required.';
@@ -23,22 +26,29 @@ function validateSSHTarget(host, user) {
     return '';
 }
 
+function validateSSHClientPath(path) {
+    const trimmed = (path || '').trim();
+    if (!trimmed) return 'SSH client path is required.';
+    if (!SAFE_SSH_CLIENT_PATH_RE.test(trimmed)) {
+        return 'SSH client path contains unsupported characters (quotes, & | < > ^ % and newlines are not allowed).';
+    }
+    return '';
+}
+
 let sshConfig = null;
 let sshPaneId = null;
 let editingSshAddressId = null;
 let sshPassMode = 'export'; // 'export' | 'import'
 let sshPassResolve = null;
 
-// Load the (global) ssh config. Wails binding first, daemon HTTP API as fallback.
+// Load the (global) ssh config. Wails binding first, daemon HTTP API as
+// fallback. Errors are propagated: silently falling back to a default config
+// would let a later save overwrite an unreadable/incompatible file.
 async function loadSSHConfig() {
     if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSSHConfig) {
         return await window.go.main.App.GetSSHConfig();
     }
-    try {
-        return await apiGet('/api/ssh/config');
-    } catch (e) {
-        return null;
-    }
+    return await apiGet('/api/ssh/config');
 }
 
 // Persist the (global) ssh config. Returns true on success.
@@ -60,7 +70,14 @@ async function persistSSHConfig() {
 // Save the ssh client path from the manager input immediately.
 async function saveSSHClientPath() {
     if (!sshConfig || !dom.sshClientPathInput) return;
-    sshConfig.clientPath = dom.sshClientPathInput.value.trim() || DEFAULT_SSH_CLIENT_PATH;
+    const value = dom.sshClientPathInput.value.trim() || DEFAULT_SSH_CLIENT_PATH;
+    const invalid = validateSSHClientPath(value);
+    if (invalid) {
+        showToast(invalid, 'error');
+        dom.sshClientPathInput.value = sshConfig.clientPath || DEFAULT_SSH_CLIENT_PATH;
+        return;
+    }
+    sshConfig.clientPath = value;
     const saved = await persistSSHConfig();
     if (saved) {
         showToast('SSH client path saved', 'success');
@@ -71,19 +88,23 @@ export async function openSSHManager(sessionId, paneId) {
     sshPaneId = paneId;
     try {
         const loaded = await loadSSHConfig();
-        if (loaded) {
-            sshConfig = loaded;
-        } else {
-            sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
+        if (!loaded) {
+            throw new Error('empty SSH config response');
         }
+        sshConfig = loaded;
     } catch (e) {
         const msg = (e && e.message) || String(e);
         if (/version/i.test(msg)) {
-            showToast('SSH config version is incompatible. Config was not loaded.', 'error');
+            showToast('SSH config version is incompatible. Config was not loaded and will not be overwritten.', 'error');
         } else {
             showToast('Failed to load SSH config: ' + msg, 'error');
         }
-        sshConfig = { clientPath: DEFAULT_SSH_CLIENT_PATH, addresses: [] };
+        // Do not open the manager with a default config: saving it would
+        // destroy the user's existing (unreadable) address book.
+        sshConfig = null;
+        sshPaneId = null;
+        if (dom.sshModalEl) dom.sshModalEl.classList.add('hidden');
+        return;
     }
     if (dom.sshClientPathInput) {
         dom.sshClientPathInput.value = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
@@ -244,6 +265,11 @@ function sshConnect(addr) {
     }
 
     const clientPath = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
+    const invalidClient = validateSSHClientPath(clientPath);
+    if (invalidClient) {
+        showToast(invalidClient, 'error');
+        return;
+    }
     // Always quote the target: even with validation this keeps shell parsing
     // predictable (and the value can never start a new command).
     const quotedTarget = `"${target}"`;
@@ -312,9 +338,22 @@ function pickSSHExportFile() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.pmuxssh';
-        input.onchange = () => {
-            resolve((input.files && input.files[0]) || null);
+        let settled = false;
+        const finish = (file) => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener('focus', onFocus);
+            resolve(file || null);
         };
+        // A cancelled file dialog never fires `change`; detect the window
+        // regaining focus and resolve with null instead of hanging forever.
+        const onFocus = () => {
+            setTimeout(() => {
+                if (!settled) finish((input.files && input.files[0]) || null);
+            }, 300);
+        };
+        input.onchange = () => finish((input.files && input.files[0]) || null);
+        window.addEventListener('focus', onFocus);
         input.click();
     });
 }

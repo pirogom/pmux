@@ -78,6 +78,9 @@ func Import(data []byte, password string) (*Config, error) {
 	if in.Version != ConfigVersion {
 		return nil, ErrUnsupportedVersion
 	}
+	if len(in.Salt) < 16 {
+		return nil, errors.New("invalid export file")
+	}
 
 	key, err := scrypt.Key([]byte(password), in.Salt, 32768, 8, 1, 32)
 	if err != nil {

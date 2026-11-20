@@ -79,6 +79,9 @@ func readPaneSize(t *testing.T, ctx context.Context, conn *websocket.Conn) (int,
 		if err := json.Unmarshal(msg, &m); err != nil {
 			t.Fatalf("unmarshal pane-size failed: %v (%s)", err, msg)
 		}
+		if m.Type == "history-end" {
+			continue // protocol marker sent after the history replay
+		}
 		if m.Type != "pane-size" {
 			t.Fatalf("unexpected frame type %q: %s", m.Type, msg)
 		}
@@ -96,12 +99,13 @@ func expectNoPaneSize(t *testing.T, ctx context.Context, conn *websocket.Conn, d
 	for {
 		type readResult struct {
 			mt  websocket.MessageType
+			msg []byte
 			err error
 		}
 		readDone := make(chan readResult, 1)
 		go func() {
-			mt, _, err := conn.Read(context.Background())
-			readDone <- readResult{mt, err}
+			mt, msg, err := conn.Read(context.Background())
+			readDone <- readResult{mt, msg, err}
 		}()
 		var timeout <-chan time.Time
 		if remaining := deadline.Sub(time.Now()); remaining > 0 {
@@ -115,6 +119,12 @@ func expectNoPaneSize(t *testing.T, ctx context.Context, conn *websocket.Conn, d
 				return
 			}
 			if res.mt == websocket.MessageText {
+				var m struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(res.msg, &m) == nil && m.Type == "history-end" {
+					continue
+				}
 				t.Fatalf("unexpected pane-size control frame")
 			}
 			// binary terminal data: drain and keep waiting

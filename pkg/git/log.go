@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -237,7 +236,11 @@ func indexFileContents(b *repoBundle, path string) (string, bool, error) {
 }
 
 func workFileContents(b *repoBundle, path string) (string, bool, error) {
-	data, err := os.ReadFile(filepath.Join(b.root, filepath.FromSlash(path)))
+	abs, err := resolveWorktreePath(b, path)
+	if err != nil {
+		return "", false, err
+	}
+	data, err := os.ReadFile(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil

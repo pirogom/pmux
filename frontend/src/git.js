@@ -115,6 +115,9 @@ export async function openWorkFolder() {
 
 let selectedDiffPath = null;
 let selectedCommitHash = null;
+// Guards against a slow response for a previously selected file overwriting
+// the diff of the file the user just clicked.
+let diffRequestSeq = 0;
 
 // Guards against overlapping polls when a repository is slow to inspect.
 let gitStatusInFlight = false;
@@ -123,7 +126,7 @@ let lastGitSignature = '';
 let lastBranchListKey = '';
 
 export async function updateGitStatus() {
-    if (gitStatusInFlight || document.hidden) return;
+    if (!dom.gitPanelEl || gitStatusInFlight || document.hidden) return;
     const workDir = getActiveWorkDir();
     if (!workDir) {
         updateGitButtonBadge(0);
@@ -190,7 +193,9 @@ export async function updateGitStatus() {
     }
 
     renderGitBranches(workDir, res.branch);
-    refreshGitLog(workDir);
+    // The status already knows HEAD; skip re-reading the log when nothing new
+    // was committed.
+    refreshGitLog(workDir, res.headHash || '');
 }
 
 function renderGitEmpty(msg) {
@@ -303,26 +308,38 @@ async function gitCommitAction() {
         if (inputEl) inputEl.focus();
         return;
     }
-    const res = await callGitCommit(workDir, message);
-    showOpOutput(res);
-    if (inputEl) inputEl.value = '';
-    await updateGitStatus();
+    try {
+        const res = await callGitCommit(workDir, message);
+        showOpOutput(res);
+        if (res && res.success && inputEl) inputEl.value = '';
+        await updateGitStatus();
+    } catch (e) {
+        showOpOutput({ success: false, error: `Commit failed: ${e.message || e}` });
+    }
 }
 
 async function gitStageAllAction() {
     const workDir = getActiveWorkDir();
     if (!workDir) return;
-    const res = await callGitStageAll(workDir);
-    showOpOutput(res);
-    await updateGitStatus();
+    try {
+        const res = await callGitStageAll(workDir);
+        showOpOutput(res);
+        await updateGitStatus();
+    } catch (e) {
+        showOpOutput({ success: false, error: `Stage failed: ${e.message || e}` });
+    }
 }
 
 async function gitStagePath(workDir, path, staged) {
-    const res = staged
-        ? await callGitUnstagePaths(workDir, [path])
-        : await callGitStagePaths(workDir, [path]);
-    showOpOutput(res);
-    await updateGitStatus();
+    try {
+        const res = staged
+            ? await callGitUnstagePaths(workDir, [path])
+            : await callGitStagePaths(workDir, [path]);
+        showOpOutput(res);
+        await updateGitStatus();
+    } catch (e) {
+        showOpOutput({ success: false, error: `${staged ? 'Unstage' : 'Stage'} failed: ${e.message || e}` });
+    }
 }
 
 // --- Rendering ---
@@ -616,7 +633,7 @@ async function loadMoreGitLog() {
     }
 }
 
-async function refreshGitLog(workDir) {
+async function refreshGitLog(workDir, headHash = '') {
     if (!dom.gitLogContainerEl) return;
     if (gitLogForceReload) {
         gitLogForceReload = false;
@@ -628,6 +645,9 @@ async function refreshGitLog(workDir) {
         return;
     }
     if (gitLogState.loading) return;
+    // HEAD is unchanged, so the first page cannot have new commits. This
+    // avoids fetching/traversing the log on every poll tick.
+    if (headHash && gitLogState.headHash === headHash) return;
 
     const seq = ++gitLogRequestSeq;
     let page;
@@ -637,8 +657,8 @@ async function refreshGitLog(workDir) {
         return;
     }
     if (seq !== gitLogRequestSeq) return;
-    const headHash = page && Array.isArray(page.commits) && page.commits[0] ? page.commits[0].hash : '';
-    if (headHash === gitLogState.headHash) return;
+    const pageHead = page && Array.isArray(page.commits) && page.commits[0] ? page.commits[0].hash : '';
+    if (pageHead === gitLogState.headHash) return;
     applyGitLogPage(workDir, page);
 }
 
@@ -825,9 +845,21 @@ function scrollDiffToFirstChange(container) {
 
 async function showDiff(workDir, path) {
     if (!dom.gitDiffViewEl || !dom.gitDiffContentEl || !dom.gitDiffPathEl) return;
+    const seq = ++diffRequestSeq;
     const wasHidden = dom.gitDiffViewEl.classList.contains('hidden');
     selectedDiffPath = path;
-    const res = await callGitDiff(workDir, path);
+    let res;
+    try {
+        res = await callGitDiff(workDir, path);
+    } catch (e) {
+        if (seq !== diffRequestSeq) return;
+        dom.gitDiffPathEl.textContent = path;
+        dom.gitDiffContentEl.textContent = `Error: ${e.message || e}`;
+        clearDiffMinimap();
+        dom.gitDiffViewEl.classList.remove('hidden');
+        return;
+    }
+    if (seq !== diffRequestSeq) return;
     if (res.error) {
         dom.gitDiffPathEl.textContent = path;
         dom.gitDiffContentEl.textContent = `Error: ${res.error}`;
@@ -881,6 +913,7 @@ async function showCommitDetail(workDir, hash) {
 }
 
 export function closeDiffView() {
+    diffRequestSeq++;
     selectedDiffPath = null;
     selectedCommitHash = null;
     if (dom.gitDiffViewEl) dom.gitDiffViewEl.classList.add('hidden');
@@ -991,8 +1024,12 @@ export function initGitEvents() {
             const branch = e.target.value;
             const workDir = getActiveWorkDir();
             if (!workDir || !branch) return;
-            const res = await callGitCheckout(workDir, branch);
-            showOpOutput(res);
+            try {
+                const res = await callGitCheckout(workDir, branch);
+                showOpOutput(res);
+            } catch (err) {
+                showOpOutput({ success: false, error: `Checkout failed: ${err.message || err}` });
+            }
             lastBranchListKey = '';
             lastGitSignature = '';
             await updateGitStatus();

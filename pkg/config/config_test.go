@@ -345,6 +345,23 @@ func TestUpsertProfileKeepsSavedLayoutAndFolder(t *testing.T) {
 	}
 }
 
+func TestUpsertProfileKeepsEnv(t *testing.T) {
+	cfg := &Config{}
+	cfg.UpsertProfile(Profile{
+		ID:      "p1",
+		Name:    "Original",
+		Command: "cmd.exe",
+		Env:     []string{"FOO=bar"},
+	})
+
+	// The profile editor only sends id/name/command/args/workDir; env must be
+	// inherited rather than wiped.
+	cfg.UpsertProfile(Profile{ID: "p1", Name: "Renamed", Command: "cmd.exe"})
+	if len(cfg.Profiles[0].Env) != 1 || cfg.Profiles[0].Env[0] != "FOO=bar" {
+		t.Fatalf("env was erased: %#v", cfg.Profiles[0].Env)
+	}
+}
+
 func mustConfigPath(t *testing.T) string {
 	t.Helper()
 	dir, err := GetConfigDir()

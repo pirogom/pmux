@@ -33,18 +33,38 @@ async function parseJSON(res) {
     }
 }
 
+// fetchWithTimeout aborts a request that takes too long. Without this a hung
+// daemon would leave polling guards (e.g. gitStatusInFlight) stuck forever.
+async function fetchWithTimeout(url, init, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } catch (e) {
+        if (e && e.name === 'AbortError') {
+            throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+const GET_TIMEOUT_MS = 30000;
+const POST_TIMEOUT_MS = 120000;
+
 // API Calls (Server HTTP API Fallback)
 export async function apiGet(path) {
-    const res = await fetch(`http://127.0.0.1:${state.serverPort}${path}`, withToken());
+    const res = await fetchWithTimeout(`http://127.0.0.1:${state.serverPort}${path}`, withToken(), GET_TIMEOUT_MS);
     return await parseJSON(res);
 }
 
 export async function apiPost(path, body) {
-    const res = await fetch(`http://127.0.0.1:${state.serverPort}${path}`, withToken({
+    const res = await fetchWithTimeout(`http://127.0.0.1:${state.serverPort}${path}`, withToken({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body === undefined ? null : body)
-    }));
+    }), POST_TIMEOUT_MS);
     return await parseJSON(res);
 }
 

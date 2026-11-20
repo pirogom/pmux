@@ -17,12 +17,11 @@ func DetectProfiles() []config.Profile {
 	cmdPath := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
 	if _, err := os.Stat(cmdPath); err == nil {
 		profiles = append(profiles, config.Profile{
-			ID:       "cmd",
-			Name:     "Command Prompt (CMD)",
-			Command:  cmdPath,
-			Args:     []string{},
-			WorkDir:  "",
-			IsPreset: true,
+			ID:      "cmd",
+			Name:    "Command Prompt (CMD)",
+			Command: cmdPath,
+			Args:    []string{},
+			WorkDir: "",
 		})
 	}
 
@@ -30,24 +29,22 @@ func DetectProfiles() []config.Profile {
 	pwshPath, err := exec.LookPath("pwsh.exe")
 	if err == nil {
 		profiles = append(profiles, config.Profile{
-			ID:       "pwsh",
-			Name:     "PowerShell Core (pwsh)",
-			Command:  pwshPath,
-			Args:     []string{},
-			WorkDir:  "",
-			IsPreset: true,
+			ID:      "pwsh",
+			Name:    "PowerShell Core (pwsh)",
+			Command: pwshPath,
+			Args:    []string{},
+			WorkDir: "",
 		})
 	}
 
 	psPath := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
 	if _, err := os.Stat(psPath); err == nil {
 		profiles = append(profiles, config.Profile{
-			ID:       "powershell",
-			Name:     "Windows PowerShell",
-			Command:  psPath,
-			Args:     []string{},
-			WorkDir:  "",
-			IsPreset: true,
+			ID:      "powershell",
+			Name:    "Windows PowerShell",
+			Command: psPath,
+			Args:    []string{},
+			WorkDir: "",
 		})
 	}
 
@@ -70,36 +67,32 @@ func DetectProfiles() []config.Profile {
 	if foundMsys != "" {
 		profiles = append(profiles,
 			config.Profile{
-				ID:       "msys2-mingw64",
-				Name:     "MSYS2 MINGW64",
-				Command:  foundMsys,
-				Args:     []string{"-defterm", "-here", "-no-start", "-mingw64", "-use-full-path"},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "msys2-mingw64",
+				Name:    "MSYS2 MINGW64",
+				Command: foundMsys,
+				Args:    []string{"-defterm", "-here", "-no-start", "-mingw64", "-use-full-path"},
+				WorkDir: "",
 			},
 			config.Profile{
-				ID:       "msys2-clang64",
-				Name:     "MSYS2 CLANG64",
-				Command:  foundMsys,
-				Args:     []string{"-defterm", "-here", "-no-start", "-clang64", "-use-full-path"},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "msys2-clang64",
+				Name:    "MSYS2 CLANG64",
+				Command: foundMsys,
+				Args:    []string{"-defterm", "-here", "-no-start", "-clang64", "-use-full-path"},
+				WorkDir: "",
 			},
 			config.Profile{
-				ID:       "msys2-ucrt64",
-				Name:     "MSYS2 UCRT64",
-				Command:  foundMsys,
-				Args:     []string{"-defterm", "-here", "-no-start", "-ucrt64", "-use-full-path"},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "msys2-ucrt64",
+				Name:    "MSYS2 UCRT64",
+				Command: foundMsys,
+				Args:    []string{"-defterm", "-here", "-no-start", "-ucrt64", "-use-full-path"},
+				WorkDir: "",
 			},
 			config.Profile{
-				ID:       "msys2-mingw32",
-				Name:     "MSYS2 MINGW32",
-				Command:  foundMsys,
-				Args:     []string{"-defterm", "-here", "-no-start", "-mingw32", "-use-full-path"},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "msys2-mingw32",
+				Name:    "MSYS2 MINGW32",
+				Command: foundMsys,
+				Args:    []string{"-defterm", "-here", "-no-start", "-mingw32", "-use-full-path"},
+				WorkDir: "",
 			},
 		)
 	}
@@ -112,12 +105,11 @@ func DetectProfiles() []config.Profile {
 	for _, gb := range gitBashCandidates {
 		if _, err := os.Stat(gb); err == nil {
 			profiles = append(profiles, config.Profile{
-				ID:       "git-bash",
-				Name:     "Git Bash",
-				Command:  gb,
-				Args:     []string{"--login", "-i"},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "git-bash",
+				Name:    "Git Bash",
+				Command: gb,
+				Args:    []string{"--login", "-i"},
+				WorkDir: "",
 			})
 			break
 		}
@@ -205,12 +197,11 @@ func detectVisualStudioProfiles() []config.Profile {
 		vsDevCmd := filepath.Join(vsDir, "Common7", "Tools", "VsDevCmd.bat")
 		if _, err := os.Stat(vsDevCmd); err == nil {
 			profiles = append(profiles, config.Profile{
-				ID:       "vs-cmd-" + edName,
-				Name:     "Developer Command Prompt for VS " + vsName,
-				Command:  cmdPath,
-				Args:     []string{"/k", vsDevCmd},
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "vs-cmd-" + edName,
+				Name:    "Developer Command Prompt for VS " + vsName,
+				Command: cmdPath,
+				Args:    []string{"/k", vsDevCmd},
+				WorkDir: "",
 			})
 		}
 
@@ -218,12 +209,11 @@ func detectVisualStudioProfiles() []config.Profile {
 		if _, err := os.Stat(devShellDll); err == nil {
 			psArgs := []string{"-NoExit", "-Command", fmt.Sprintf("& {Import-Module '%s'; Enter-VsDevShell -VsInstallFolder '%s' -SkipAutomaticLocation}", devShellDll, vsDir)}
 			profiles = append(profiles, config.Profile{
-				ID:       "vs-ps-" + edName,
-				Name:     "Developer PowerShell for VS " + vsName,
-				Command:  psPath,
-				Args:     psArgs,
-				WorkDir:  "",
-				IsPreset: true,
+				ID:      "vs-ps-" + edName,
+				Name:    "Developer PowerShell for VS " + vsName,
+				Command: psPath,
+				Args:    psArgs,
+				WorkDir: "",
 			})
 		}
 	}

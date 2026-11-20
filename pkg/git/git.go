@@ -116,6 +116,31 @@ func openRepo(workDir string) (*repoBundle, error) {
 	return &repoBundle{repo: repo, worktree: wt, root: root}, nil
 }
 
+// resolveWorktreePath validates a repository-relative path and returns its
+// absolute location inside the worktree. Paths that are absolute, use a drive
+// letter, or escape the repository root (../) are rejected so a request can
+// never read or modify files outside the repository.
+func resolveWorktreePath(b *repoBundle, path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("empty path")
+	}
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" {
+		return "", errors.New("absolute paths are not allowed")
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(path))
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes repository")
+	}
+
+	abs := filepath.Join(b.root, cleaned)
+	rel, err := filepath.Rel(b.root, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes repository")
+	}
+	return abs, nil
+}
+
 // currentBranch resolves the branch HEAD points to, handling detached HEAD and
 // unborn branches (empty repositories).
 func currentBranch(repo *gogit.Repository) string {

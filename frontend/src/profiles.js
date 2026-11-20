@@ -10,7 +10,70 @@ let editingProfileId = null;
 const DRAG_PROFILE = 'application/x-pmux-profile';
 const DRAG_FOLDER = 'application/x-pmux-folder';
 
-const collapsedFolders = new Set(JSON.parse(localStorage.getItem('pmux_folder_collapsed') || '[]'));
+function loadCollapsedFolders() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem('pmux_folder_collapsed') || '[]');
+        return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch (e) {
+        // A corrupt value must not prevent the whole app from loading.
+        return new Set();
+    }
+}
+
+const collapsedFolders = loadCollapsedFolders();
+
+// Args are stored as an array. The editor uses a comma-separated string, with
+// quotes/backslashes supported so an argument may itself contain commas or
+// spaces (e.g. -Command,"& { Write-Host 'hello, world' }").
+function parseArgsString(input) {
+    const text = (input || '').trim();
+    if (!text) return [];
+    const out = [];
+    let current = '';
+    let quote = null;
+    let escaped = false;
+
+    for (const ch of text) {
+        if (quote) {
+            // Backslash escapes only inside quotes, so unquoted Windows paths
+            // like C:\foo\bar keep their backslashes.
+            if (escaped) {
+                current += ch;
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === quote) {
+                quote = null;
+            } else {
+                current += ch;
+            }
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (ch === ',') {
+            if (current.trim() !== '') out.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+    if (escaped) current += '\\';
+    if (current.trim() !== '') out.push(current.trim());
+    return out;
+}
+
+function formatArgsString(args) {
+    return (args || []).map(arg => {
+        const value = String(arg);
+        if (/[",\\]/.test(value)) {
+            return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+        }
+        return value;
+    }).join(',');
+}
 
 function saveCollapsedState() {
     localStorage.setItem('pmux_folder_collapsed', JSON.stringify([...collapsedFolders]));
@@ -441,7 +504,8 @@ async function deleteFolder(folder) {
 
 async function deleteProfile(id) {
     const confirmed = await showConfirm('Delete Profile', 'Are you sure you want to delete this profile?');
-    if (confirmed) {
+    if (!confirmed) return;
+    try {
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.DeleteProfile) {
             await window.go.main.App.DeleteProfile(id);
         } else {
@@ -449,6 +513,8 @@ async function deleteProfile(id) {
         }
         await refreshConfigAndProfiles();
         showToast('Profile deleted', 'success');
+    } catch (e) {
+        showToast(`Failed to delete profile: ${e.message || e}`, 'error');
     }
 }
 
@@ -462,7 +528,7 @@ export async function openProfileModal(profToEdit = null) {
         if (modalTitle) modalTitle.textContent = 'Edit Profile';
         dom.profNameInput.value = profToEdit.name || '';
         dom.profCmdInput.value = profToEdit.command || '';
-        dom.profArgsInput.value = (profToEdit.args || []).join(',');
+        dom.profArgsInput.value = formatArgsString(profToEdit.args || []);
         dom.profDirInput.value = profToEdit.workDir || '';
     } else {
         editingProfileId = null;
@@ -492,7 +558,7 @@ export async function openProfileModal(profToEdit = null) {
             btn.addEventListener('click', () => {
                 dom.profNameInput.value = preset.name;
                 dom.profCmdInput.value = preset.command;
-                dom.profArgsInput.value = (preset.args || []).join(',');
+                dom.profArgsInput.value = formatArgsString(preset.args || []);
             });
             dom.presetButtonsEl.appendChild(btn);
         });
@@ -525,7 +591,7 @@ async function saveProfileFromModal() {
         return;
     }
 
-    const args = argsStr ? argsStr.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const args = parseArgsString(argsStr);
     const isEdit = !!editingProfileId;
     const prof = { 
         id: editingProfileId || '',

@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"pmux/pkg/fileutil"
 )
 
 type Item struct {
@@ -64,6 +67,11 @@ func Load(workDir string) ([]Item, error) {
 
 	items := []Item{}
 	if err := json.Unmarshal(data, &items); err != nil {
+		// Never silently discard a user's todo list: keep a copy for manual
+		// recovery before starting over with an empty list.
+		if backup, berr := fileutil.BackupCorrupt(todoFile, data); berr == nil {
+			log.Printf("[todo] corrupt todo file (%v); backup saved to %s", err, backup)
+		}
 		return []Item{}, nil
 	}
 	if items == nil {
@@ -88,5 +96,5 @@ func Save(workDir string, items []Item) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(todoFile, data, 0644)
+	return fileutil.WriteFileAtomic(todoFile, data, 0600)
 }

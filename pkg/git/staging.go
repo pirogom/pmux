@@ -26,6 +26,9 @@ func Stage(workDir string, paths []string) GitOpResult {
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
+		if _, err := resolveWorktreePath(bundle, p); err != nil {
+			return opErr(fmt.Errorf("failed to stage %q: %w", p, err))
+		}
 		if err := bundle.worktree.AddWithOptions(&gogit.AddOptions{Path: p}); err != nil {
 			return opErr(fmt.Errorf("failed to stage %q: %w", p, err))
 		}
@@ -51,6 +54,9 @@ func Unstage(workDir string, paths []string) GitOpResult {
 	for _, p := range paths {
 		if strings.TrimSpace(p) == "" {
 			continue
+		}
+		if _, err := resolveWorktreePath(bundle, p); err != nil {
+			return opErr(fmt.Errorf("failed to unstage %q: %w", p, err))
 		}
 		if err := bundle.worktree.Reset(&gogit.ResetOptions{Files: []string{p}}); err != nil {
 			return opErr(fmt.Errorf("failed to unstage %q: %w", p, err))

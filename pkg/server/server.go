@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -27,20 +28,19 @@ type Server struct {
 	token        string
 	sessionMgr   *SessionManager
 	srv          *http.Server
-	eventClients map[*websocket.Conn]bool
+	eventClients map[*websocket.Conn]chan []byte
 	eventMu      sync.Mutex
-	mu           sync.Mutex
 }
 
 func NewServer(port int) *Server {
-	if port <= 0 {
+	if port < 1 || port > 65535 {
 		port = 4799
 	}
 	s := &Server{
 		port:         port,
 		token:        MustToken(),
 		sessionMgr:   NewSessionManager(),
-		eventClients: make(map[*websocket.Conn]bool),
+		eventClients: make(map[*websocket.Conn]chan []byte),
 	}
 	s.sessionMgr.SetBroadcaster(s.BroadcastEvent)
 	return s
@@ -86,18 +86,18 @@ func (s *Server) BroadcastEvent(eventType string, data interface{}) {
 		return
 	}
 
+	// Each client has its own bounded queue drained by a single writer
+	// goroutine. Broadcasting is non-blocking, so a slow client can never
+	// spawn goroutines or stall the session manager; it simply misses events
+	// and recovers on reconnect.
 	s.eventMu.Lock()
-	clients := make([]*websocket.Conn, 0, len(s.eventClients))
-	for conn := range s.eventClients {
-		clients = append(clients, conn)
+	for _, ch := range s.eventClients {
+		select {
+		case ch <- msg:
+		default:
+		}
 	}
 	s.eventMu.Unlock()
-
-	for _, conn := range clients {
-		go func(c *websocket.Conn) {
-			_ = safeWriteWS(c, msg)
-		}(conn)
-	}
 }
 
 func (s *Server) GetSessionManager() *SessionManager {
@@ -107,57 +107,120 @@ func (s *Server) GetSessionManager() *SessionManager {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/sessions", s.handleSessions)
-	mux.HandleFunc("/api/sessions/split", s.handleSplit)
-	mux.HandleFunc("/api/sessions/close-pane", s.handleClosePane)
-	mux.HandleFunc("/api/sessions/close-session", s.handleCloseSession)
-	mux.HandleFunc("/api/sessions/rename", s.handleRenameSession)
-	mux.HandleFunc("/api/sessions/active-pane", s.handleSetActivePane)
-	mux.HandleFunc("/api/sessions/open-work-folder", s.handleOpenWorkFolder)
-	mux.HandleFunc("/api/profiles", s.handleProfiles)
-	mux.HandleFunc("/api/profiles/delete", s.handleProfileDelete)
-	mux.HandleFunc("/api/profiles/move", s.handleProfileMove)
-	mux.HandleFunc("/api/profiles/notify-change", s.handleProfilesNotifyChange)
-	mux.HandleFunc("/api/profile-folders/create", s.handleProfileFolderCreate)
-	mux.HandleFunc("/api/profile-folders/rename", s.handleProfileFolderRename)
-	mux.HandleFunc("/api/profile-folders/delete", s.handleProfileFolderDelete)
-	mux.HandleFunc("/api/profile-folders/reorder", s.handleProfileFolderReorder)
-	mux.HandleFunc("/api/git/status", s.handleGitStatus)
-	mux.HandleFunc("/api/git/log", s.handleGitLog)
-	mux.HandleFunc("/api/git/diff", s.handleGitDiff)
-	mux.HandleFunc("/api/git/show", s.handleGitShow)
-	mux.HandleFunc("/api/git/branches", s.handleGitBranches)
-	mux.HandleFunc("/api/git/remotes", s.handleGitRemotes)
-	mux.HandleFunc("/api/git/push", s.handleGitPush)
-	mux.HandleFunc("/api/git/pull", s.handleGitPull)
-	mux.HandleFunc("/api/git/fetch", s.handleGitFetch)
-	mux.HandleFunc("/api/git/commit", s.handleGitCommit)
-	mux.HandleFunc("/api/git/stage", s.handleGitStage)
-	mux.HandleFunc("/api/git/unstage", s.handleGitUnstage)
-	mux.HandleFunc("/api/git/stage-all", s.handleGitStageAll)
-	mux.HandleFunc("/api/git/checkout", s.handleGitCheckout)
-	mux.HandleFunc("/api/ssh/config", s.handleSSHConfig)
-	mux.HandleFunc("/api/ssh/export", s.handleSSHExport)
-	mux.HandleFunc("/api/ssh/import", s.handleSSHImport)
-	mux.HandleFunc("/api/config/git-poll-interval", s.handleSaveGitPollInterval)
-	mux.HandleFunc("/api/config", s.handleGetConfig)
-	mux.HandleFunc("/api/todo/load", s.handleTodoLoad)
-	mux.HandleFunc("/api/todo/save", s.handleTodoSave)
-	mux.HandleFunc("/api/note/load", s.handleNoteLoad)
-	mux.HandleFunc("/api/note/save", s.handleNoteSave)
-	mux.HandleFunc("/api/server/kill", s.handleKillServer)
-	mux.HandleFunc("/ws/pane/", s.handleWSPane)
-	mux.HandleFunc("/ws/events", s.handleWSEvents)
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/sessions", s.handleSessions)
+	mux.HandleFunc("POST /api/sessions", s.handleSessions)
+	mux.HandleFunc("POST /api/sessions/split", s.handleSplit)
+	mux.HandleFunc("POST /api/sessions/close-pane", s.handleClosePane)
+	mux.HandleFunc("POST /api/sessions/close-session", s.handleCloseSession)
+	mux.HandleFunc("POST /api/sessions/rename", s.handleRenameSession)
+	mux.HandleFunc("POST /api/sessions/active-pane", s.handleSetActivePane)
+	mux.HandleFunc("POST /api/sessions/open-work-folder", s.handleOpenWorkFolder)
+	mux.HandleFunc("GET /api/profiles", s.handleProfiles)
+	mux.HandleFunc("POST /api/profiles", s.handleProfiles)
+	mux.HandleFunc("POST /api/profiles/delete", s.handleProfileDelete)
+	mux.HandleFunc("POST /api/profiles/move", s.handleProfileMove)
+	mux.HandleFunc("POST /api/profiles/notify-change", s.handleProfilesNotifyChange)
+	mux.HandleFunc("POST /api/profile-folders/create", s.handleProfileFolderCreate)
+	mux.HandleFunc("POST /api/profile-folders/rename", s.handleProfileFolderRename)
+	mux.HandleFunc("POST /api/profile-folders/delete", s.handleProfileFolderDelete)
+	mux.HandleFunc("POST /api/profile-folders/reorder", s.handleProfileFolderReorder)
+	mux.HandleFunc("GET /api/git/status", s.handleGitStatus)
+	mux.HandleFunc("GET /api/git/log", s.handleGitLog)
+	mux.HandleFunc("GET /api/git/diff", s.handleGitDiff)
+	mux.HandleFunc("GET /api/git/show", s.handleGitShow)
+	mux.HandleFunc("GET /api/git/branches", s.handleGitBranches)
+	mux.HandleFunc("GET /api/git/remotes", s.handleGitRemotes)
+	mux.HandleFunc("POST /api/git/push", s.handleGitPush)
+	mux.HandleFunc("POST /api/git/pull", s.handleGitPull)
+	mux.HandleFunc("POST /api/git/fetch", s.handleGitFetch)
+	mux.HandleFunc("POST /api/git/commit", s.handleGitCommit)
+	mux.HandleFunc("POST /api/git/stage", s.handleGitStage)
+	mux.HandleFunc("POST /api/git/unstage", s.handleGitUnstage)
+	mux.HandleFunc("POST /api/git/stage-all", s.handleGitStageAll)
+	mux.HandleFunc("POST /api/git/checkout", s.handleGitCheckout)
+	mux.HandleFunc("GET /api/ssh/config", s.handleSSHConfig)
+	mux.HandleFunc("POST /api/ssh/config", s.handleSSHConfig)
+	mux.HandleFunc("POST /api/ssh/export", s.handleSSHExport)
+	mux.HandleFunc("POST /api/ssh/import", s.handleSSHImport)
+	mux.HandleFunc("POST /api/config/git-poll-interval", s.handleSaveGitPollInterval)
+	mux.HandleFunc("GET /api/config", s.handleGetConfig)
+	mux.HandleFunc("POST /api/todo/load", s.handleTodoLoad)
+	mux.HandleFunc("POST /api/todo/save", s.handleTodoSave)
+	mux.HandleFunc("POST /api/note/load", s.handleNoteLoad)
+	mux.HandleFunc("POST /api/note/save", s.handleNoteSave)
+	mux.HandleFunc("POST /api/server/kill", s.handleKillServer)
+	mux.HandleFunc("GET /ws/pane/", s.handleWSPane)
+	mux.HandleFunc("GET /ws/events", s.handleWSEvents)
 
 	s.srv = &http.Server{
 		Addr:              fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler:           corsMiddleware(s.authMiddleware(mux)),
+		Handler:           corsMiddleware(s.authMiddleware(limitBodyMiddleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	log.Printf("[pmux server] Started listening on http://127.0.0.1:%d", s.port)
 	return s.srv.ListenAndServe()
+}
+
+// maxRequestBodyBytes caps every API request body. Individual handlers (todo,
+// note) may impose a smaller limit.
+const maxRequestBodyBytes = 16 << 20 // 16 MiB
+
+func limitBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Shutdown closes every pane/process and stops the HTTP server. It is safe to
+// call from a signal handler or from the /api/server/kill goroutine.
+func (s *Server) Shutdown() {
+	s.sessionMgr.CloseAll()
+	s.sessionMgr.ShutdownOrphans()
+
+	// Wake up event-stream readers so http.Server.Shutdown can complete.
+	s.eventMu.Lock()
+	for conn := range s.eventClients {
+		_ = conn.Close(websocket.StatusNormalClosure, "server shutting down")
+	}
+	s.eventMu.Unlock()
+
+	if s.srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = s.srv.Shutdown(ctx)
+	}
+}
+
+// StopServer asks the daemon listening on port to shut down. It is used by the
+// CLI so `pmux --stop --port N` targets the same port it checked.
+func StopServer(port int) error {
+	token, err := GetToken()
+	if err != nil || token == "" {
+		return errNoToken
+	}
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/server/kill", port), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -839,7 +902,7 @@ func (s *Server) handleKillServer(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		s.sessionMgr.ShutdownOrphans()
+		s.Shutdown()
 		os.Exit(0)
 	}()
 }
@@ -898,10 +961,17 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 		_ = safeWriteWSBinary(conn, preamble)
 	}
 
-	// Send history buffer on attach before registering live channel
+	// Replay the history buffer. The client is already registered above, so
+	// live output queues behind this replay and is written in order by the
+	// pump below.
 	history := pane.Buffer.Bytes()
 	if len(history) > 0 {
 		_ = safeWriteWSBinary(conn, history)
+	}
+	// Explicit end-of-history marker: the client can stop suppressing xterm
+	// auto-replies immediately instead of guessing with a timeout.
+	if endMsg, err := json.Marshal(map[string]interface{}{"type": "history-end"}); err == nil {
+		_ = safeWriteWS(conn, endMsg)
 	}
 
 	// Dedicated non-blocking writer pump: coalesces queued chunks into unified frames
@@ -989,13 +1059,39 @@ func (s *Server) handleWSEvents(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(16 * 1024 * 1024)
 	defer removeWSConn(conn)
 
+	// One bounded queue per client, drained by a single writer goroutine.
+	// Sends from BroadcastEvent are non-blocking, so a slow client cannot
+	// accumulate goroutines or stall the daemon.
+	ch := make(chan []byte, 256)
 	s.eventMu.Lock()
-	s.eventClients[conn] = true
+	s.eventClients[conn] = ch
 	s.eventMu.Unlock()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := safeWriteWS(conn, msg); err != nil {
+					cancel()
+					_ = conn.Close(websocket.StatusInternalError, "event stream write failed")
+					return
+				}
+			}
+		}
+	}()
 
 	defer func() {
 		s.eventMu.Lock()
 		delete(s.eventClients, conn)
+		close(ch)
 		s.eventMu.Unlock()
 	}()
 
@@ -1050,18 +1146,6 @@ func IsServerRunning(port int) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
-}
-
-var (
-	defaultServer *Server
-	serverOnce    sync.Once
-)
-
-func GetDefaultServer(port int) *Server {
-	serverOnce.Do(func() {
-		defaultServer = NewServer(port)
-	})
-	return defaultServer
 }
 
 func EnsureServerRunning(port int) error {

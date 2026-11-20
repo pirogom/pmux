@@ -33,8 +33,16 @@ export async function refreshSessions() {
                 if (!isEditingSessionTitle) {
                     setSessionTitle(state.activeSession.name);
                 }
-            } else if (state.sessions.length === 0) {
-                showEmptyState();
+            } else {
+                // The active session no longer exists; never keep a stale
+                // pointer (it would make later layout comparisons lie).
+                state.activeSession = null;
+                state.activePaneId = null;
+                if (state.sessions.length > 0) {
+                    attachToSession(state.sessions[0].id);
+                } else {
+                    showEmptyState();
+                }
             }
         } else if (state.sessions.length > 0) {
             attachToSession(state.sessions[0].id);
@@ -96,13 +104,7 @@ async function closeSession(sessionId, sessionName) {
         // Clean active panes map for closed session
         const sess = state.sessions.find(s => s.id === sessionId);
         if (sess && sess.panes) {
-            Object.keys(sess.panes).forEach(paneId => {
-                if (state.activePanesMap.has(paneId)) {
-                    const p = state.activePanesMap.get(paneId);
-                    try { p.ws.close(); } catch(e){}
-                    state.activePanesMap.delete(paneId);
-                }
-            });
+            Object.keys(sess.panes).forEach(paneId => disposePane(paneId));
         }
 
         if (state.activeSession && state.activeSession.id === sessionId) {
@@ -226,6 +228,28 @@ export async function createSessionFromProfile(prof) {
     }
 }
 
+// disposePane releases everything a pane owns: the socket (without triggering
+// auto-reconnect), the xterm instance (including its WebGL context) and the DOM
+// element. Forgetting term.dispose() leaks WebGL contexts until rendering
+// breaks after enough pane open/close cycles.
+function disposePane(paneId) {
+    const entry = state.activePanesMap.get(paneId);
+    if (!entry) return;
+    state.activePanesMap.delete(paneId);
+    try {
+        if (entry.ws) {
+            entry.ws.onclose = null; // Prevent reconnect
+            entry.ws.close();
+        }
+    } catch (e) {}
+    try {
+        if (entry.term) entry.term.dispose();
+    } catch (e) {}
+    try {
+        if (entry.element) entry.element.remove();
+    } catch (e) {}
+}
+
 function cleanupOrphanPanes() {
     // Collect all valid pane IDs across all active sessions
     const validPaneIds = new Set();
@@ -237,20 +261,7 @@ function cleanupOrphanPanes() {
 
     state.activePanesMap.forEach((entry, paneId) => {
         if (!validPaneIds.has(paneId)) {
-            // Pane was closed or no longer exists in any session
-            try {
-                if (entry.ws) {
-                    entry.ws.onclose = null; // Prevent reconnect
-                    entry.ws.close();
-                }
-                if (entry.term) {
-                    entry.term.dispose();
-                }
-                if (entry.element) {
-                    entry.element.remove();
-                }
-            } catch (e) {}
-            state.activePanesMap.delete(paneId);
+            disposePane(paneId);
         }
     });
 }
@@ -258,6 +269,8 @@ function cleanupOrphanPanes() {
 export function showEmptyState() {
     state.activeSession = null;
     state.activePaneId = null;
+    // No session remains, so every cached terminal can be released.
+    [...state.activePanesMap.keys()].forEach(disposePane);
     closeTodoModal();
     setSessionTitle('No Active Session');
     if (dom.btnRenameSessionEl) dom.btnRenameSessionEl.classList.add('hidden');
@@ -290,7 +303,9 @@ export async function attachToSession(sessionId) {
     // Cleanup any deleted/orphan panes from activePanesMap (across all sessions)
     cleanupOrphanPanes();
 
-    // Render Terminal Grid layout
+    // Render Terminal Grid layout. Restore the user's splitter ratios when the
+    // layout shape has not changed since they were saved.
+    applySavedLayoutRatios(sess);
     dom.terminalWorkspaceEl.innerHTML = '';
     dom.emptyStateEl.style.display = 'none';
 
@@ -309,6 +324,61 @@ export async function attachToSession(sessionId) {
 }
 
 // --- Layout Tree & Splitters ---
+
+const LAYOUT_RATIOS_KEY = 'pmux_layout_ratios';
+
+// layoutSignature identifies a layout shape (directions + pane IDs) so saved
+// splitter ratios are only restored when the tree still has the same shape.
+export function layoutSignature(node) {
+    if (!node) return '';
+    if (node.id) return `L:${node.id}`;
+    const children = (node.children || []).map(layoutSignature).join(',');
+    return `B:${node.direction || ''}[${children}]`;
+}
+
+function collectBranchRatios(node, out = []) {
+    if (!node || node.id) return out;
+    out.push(typeof node.ratio === 'number' && node.ratio > 0 ? node.ratio : 1);
+    (node.children || []).forEach(child => collectBranchRatios(child, out));
+    return out;
+}
+
+function applyBranchRatios(node, ratios, cursor) {
+    if (!node || node.id) return;
+    const ratio = ratios[cursor.i++];
+    if (typeof ratio === 'number' && ratio > 0 && ratio <= 1) {
+        node.ratio = ratio;
+    }
+    (node.children || []).forEach(child => applyBranchRatios(child, ratios, cursor));
+}
+
+function applySavedLayoutRatios(sess) {
+    if (!sess || !sess.layout) return;
+    try {
+        const all = JSON.parse(localStorage.getItem(LAYOUT_RATIOS_KEY) || '{}');
+        const saved = all[sess.id];
+        if (!saved || saved.sig !== layoutSignature(sess.layout) || !Array.isArray(saved.ratios)) {
+            return;
+        }
+        applyBranchRatios(sess.layout, saved.ratios, { i: 0 });
+    } catch (e) {
+        // Corrupt/blocked localStorage must never break rendering.
+    }
+}
+
+function saveLayoutRatios(sess) {
+    if (!sess || !sess.layout || !sess.id) return;
+    try {
+        const all = JSON.parse(localStorage.getItem(LAYOUT_RATIOS_KEY) || '{}');
+        all[sess.id] = {
+            sig: layoutSignature(sess.layout),
+            ratios: collectBranchRatios(sess.layout)
+        };
+        localStorage.setItem(LAYOUT_RATIOS_KEY, JSON.stringify(all));
+    } catch (e) {
+        // ignore quota/storage errors
+    }
+}
 
 function renderLayoutTree(node, sess, isRoot = true) {
     if (!node) return document.createElement('div');
@@ -449,6 +519,7 @@ function makeSplitterResizable(splitter, container, direction, prevNode, nextNod
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
 
+            saveLayoutRatios(state.activeSession);
             reflowAllPanes();
         };
 
@@ -638,7 +709,9 @@ function initXtermPane(containerEl, paneData) {
     let retryCount = 0;
     let hasEverConnected = false;
     let isReconnecting = false;
-    let isWritingServerOutput = false;
+    // Number of term.write() calls still being rendered. A counter (rather
+    // than a boolean) keeps auto-reply suppression active while writes overlap.
+    let pendingWrites = 0;
     let isReplayingHistory = true;
 
     // Detect terminal internal auto-responses (e.g. OSC 10/11/4 color queries, DSR cursor reports, DECRQM mode reports)
@@ -674,7 +747,9 @@ function initXtermPane(containerEl, paneData) {
         ws.onopen = () => {
             console.log(`WebSocket connected to pane ${paneData.id} at ${wsUrl}`);
             isReplayingHistory = true;
-            setTimeout(() => { isReplayingHistory = false; }, 600);
+            // The server sends an explicit history-end control frame; this
+            // timer is only a safety net for an older daemon.
+            setTimeout(() => { isReplayingHistory = false; }, 2500);
 
             if (isReconnecting) {
                 showToast('Terminal connection restored', 'success');
@@ -697,13 +772,13 @@ function initXtermPane(containerEl, paneData) {
         ws.binaryType = 'arraybuffer';
 
         const safeTermWrite = (data) => {
-            isWritingServerOutput = true;
+            pendingWrites++;
             try {
                 term.write(data, () => {
-                    isWritingServerOutput = false;
+                    pendingWrites = Math.max(0, pendingWrites - 1);
                 });
             } catch (e) {
-                isWritingServerOutput = false;
+                pendingWrites = Math.max(0, pendingWrites - 1);
             }
         };
 
@@ -713,6 +788,10 @@ function initXtermPane(containerEl, paneData) {
                 // terminal data is always sent as binary frames.
                 try {
                     const msg = JSON.parse(event.data);
+                    if (msg && msg.type === 'history-end') {
+                        isReplayingHistory = false;
+                        return;
+                    }
                     if (msg && msg.type === 'pane-size') {
                         if (msg.cols >= 10 && msg.rows >= 3 && (msg.cols !== term.cols || msg.rows !== term.rows)) {
                             term.resize(msg.cols, msg.rows);
@@ -803,7 +882,7 @@ function initXtermPane(containerEl, paneData) {
     term.onData((data) => {
         // Prevent xterm.js auto-replies (e.g. OSC color responses, cursor position reports)
         // generated during history replay or server output rendering from echoing back to the shell stdin.
-        if (isWritingServerOutput || isReplayingHistory) {
+        if (pendingWrites > 0 || isReplayingHistory) {
             if (isTerminalQueryResponse(data)) {
                 return;
             }
@@ -885,11 +964,7 @@ async function closePane(sessionId, paneId) {
             await apiPost('/api/sessions/close-pane', { sessionId, paneId });
         }
         
-        if (state.activePanesMap.has(paneId)) {
-            const paneObj = state.activePanesMap.get(paneId);
-            if (paneObj.ws) paneObj.ws.close();
-            state.activePanesMap.delete(paneId);
-        }
+        disposePane(paneId);
 
         await refreshSessions();
         if (state.activeSession) {

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"pmux/pkg/config"
+	"pmux/pkg/fileutil"
 )
 
 // ConfigVersion is the current version of the ssh config file format.
@@ -44,12 +45,18 @@ type envelope struct {
 }
 
 var (
-	configFile string
-	mu         sync.Mutex
+	configFile   string
+	configFileMu sync.Mutex
+	mu           sync.Mutex
 )
 
-// GetConfigFile returns the absolute path of the ssh config file.
+// GetConfigFile returns the absolute path of the ssh config file. Tests set
+// configFile directly before calling it, so an explicitly assigned path is
+// always honored.
 func GetConfigFile() (string, error) {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
 	if configFile != "" {
 		return configFile, nil
 	}
@@ -118,11 +125,15 @@ func Load() (*Config, error) {
 	return &loaded, nil
 }
 
-// Save encrypts and writes the ssh config.
+// Save encrypts and writes the ssh config. The GUI process and the background
+// daemon can both write it, so a cross-process file lock is taken in addition
+// to the in-process mutex.
 func Save(cfg *Config) error {
 	mu.Lock()
 	defer mu.Unlock()
-	return saveLocked(cfg)
+	return config.WithFileLock("ssh.lock", func() error {
+		return saveLocked(cfg)
+	})
 }
 
 func saveLocked(cfg *Config) error {
@@ -154,5 +165,5 @@ func saveLocked(cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0600)
+	return fileutil.WriteFileAtomic(path, data, 0600)
 }

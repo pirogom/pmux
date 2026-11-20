@@ -2,10 +2,15 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -76,8 +81,7 @@ func main() {
 			fmt.Printf("pmux server is NOT running on port %d.\n", port)
 			return
 		}
-		app := NewApp()
-		if err := app.KillServer(); err != nil {
+		if err := server.StopServer(port); err != nil {
 			fmt.Printf("Failed to stop pmux server: %v\n", err)
 		} else {
 			fmt.Printf("pmux server running on port %d stopped successfully.\n", port)
@@ -87,14 +91,25 @@ func main() {
 
 	if *isServerMode {
 		srv := server.NewServer(port)
-		if err := srv.Start(); err != nil {
+
+		// Shut down cleanly on Ctrl+C / termination so every ConPTY and child
+		// process is closed instead of being orphaned.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			srv.Shutdown()
+		}()
+
+		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Printf("Server exit with error: %v\n", err)
 		}
 		return
 	}
 
-	// Create an instance of the app structure
-	app := NewApp()
+	// Create an instance of the app structure. An explicit --port is honored
+	// for the GUI's daemon calls as well.
+	app := NewAppWithPort(port)
 
 	// Create application with options
 	err := wails.Run(&options.App{

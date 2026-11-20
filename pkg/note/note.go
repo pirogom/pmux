@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"pmux/pkg/fileutil"
 )
 
 type Note struct {
@@ -63,6 +66,11 @@ func Load(workDir string) ([]Note, error) {
 
 	notes := []Note{}
 	if err := json.Unmarshal(data, &notes); err != nil {
+		// Preserve the unreadable file instead of letting the next save
+		// destroy the user's notes.
+		if backup, berr := fileutil.BackupCorrupt(noteFile, data); berr == nil {
+			log.Printf("[note] corrupt note file (%v); backup saved to %s", err, backup)
+		}
 		return []Note{}, nil
 	}
 	if notes == nil {
@@ -87,5 +95,5 @@ func Save(workDir string, notes []Note) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(noteFile, data, 0644)
+	return fileutil.WriteFileAtomic(noteFile, data, 0600)
 }

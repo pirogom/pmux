@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"pmux/pkg/config"
@@ -23,6 +24,8 @@ import (
 // App struct
 type App struct {
 	ctx context.Context
+	// port overrides the configured daemon port when set (--port).
+	port int
 }
 
 // NewApp creates a new App application struct
@@ -30,13 +33,26 @@ func NewApp() *App {
 	return &App{}
 }
 
+// NewAppWithPort creates an App that talks to the daemon on the given port,
+// honoring an explicit --port flag.
+func NewAppWithPort(port int) *App {
+	return &App{port: port}
+}
+
+func (a *App) daemonPort() int {
+	if a.port > 0 {
+		return a.port
+	}
+	return server.GetServerPort()
+}
+
 // daemonHTTPClient is used for every call to the background daemon. A timeout
 // is mandatory: without one a hung daemon would freeze the GUI forever.
 var daemonHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // daemonRequest performs an authenticated request against the local daemon.
-func daemonRequest(method, path string, body []byte) (*http.Response, error) {
-	port := server.GetServerPort()
+func (a *App) daemonRequest(method, path string, body []byte) (*http.Response, error) {
+	port := a.daemonPort()
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -55,7 +71,7 @@ func daemonRequest(method, path string, body []byte) (*http.Response, error) {
 }
 
 // postJSON marshals body, POSTs it to the daemon and returns the response.
-func postJSON(path string, body interface{}) (*http.Response, error) {
+func (a *App) postJSON(path string, body interface{}) (*http.Response, error) {
 	var data []byte
 	var err error
 	if body != nil {
@@ -64,7 +80,24 @@ func postJSON(path string, body interface{}) (*http.Response, error) {
 			return nil, err
 		}
 	}
-	return daemonRequest(http.MethodPost, path, data)
+	return a.daemonRequest(http.MethodPost, path, data)
+}
+
+// checkResponse converts a non-2xx daemon response into an error so callers do
+// not report success when the daemon rejected the request.
+func checkResponse(resp *http.Response, what string) error {
+	if resp == nil {
+		return fmt.Errorf("%s: empty response", what)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	detail := strings.TrimSpace(string(body))
+	if detail == "" {
+		detail = resp.Status
+	}
+	return fmt.Errorf("%s: %s", what, detail)
 }
 
 // startup is called when the app starts. The context is saved
@@ -76,7 +109,7 @@ func (a *App) startup(ctx context.Context) {
 	_, _ = config.LoadConfig()
 
 	// 2. Ensure background server is running
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 }
 
@@ -92,10 +125,10 @@ func (a *App) GetServerToken() string {
 }
 
 func (a *App) RenameSession(sessionID, newName string) error {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := postJSON("/api/sessions/rename", map[string]string{
+	resp, err := a.postJSON("/api/sessions/rename", map[string]string{
 		"sessionId": sessionID,
 		"newName":   newName,
 	})
@@ -116,15 +149,15 @@ func (a *App) SaveGitPollInterval(interval int) error {
 	} else if interval > 10 {
 		interval = 10
 	}
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := postJSON("/api/config/git-poll-interval", map[string]int{"interval": interval})
+	resp, err := a.postJSON("/api/config/git-poll-interval", map[string]int{"interval": interval})
 	if err != nil {
 		return fmt.Errorf("failed to save git poll interval: %w", err)
 	}
 	defer resp.Body.Close()
-	return nil
+	return checkResponse(resp, "failed to save git poll interval")
 }
 
 func (a *App) SaveProfile(p config.Profile) error {
@@ -150,7 +183,7 @@ func (a *App) DeleteProfile(id string) error {
 }
 
 func (a *App) notifyProfilesChanged() {
-	resp, err := postJSON("/api/profiles/notify-change", nil)
+	resp, err := a.postJSON("/api/profiles/notify-change", nil)
 	if err == nil && resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -224,7 +257,7 @@ func (a *App) GetDetectedProfiles() []config.Profile {
 }
 
 func (a *App) GetServerPort() int {
-	return server.GetServerPort()
+	return a.daemonPort()
 }
 
 func (a *App) GetGitStatus(workDir string) git.GitStatusResult {
@@ -284,14 +317,16 @@ func (a *App) GetGitRemotes(workDir string) ([]git.GitRemote, error) {
 }
 
 func (a *App) KillServer() error {
-	port := server.GetServerPort()
-	if server.IsServerRunning(port) {
-		resp, err := postJSON("/api/server/kill", nil)
-		if err == nil && resp != nil {
-			_ = resp.Body.Close()
-		}
+	port := a.daemonPort()
+	if !server.IsServerRunning(port) {
+		return nil
 	}
-	return nil
+	resp, err := a.postJSON("/api/server/kill", nil)
+	if err != nil {
+		return fmt.Errorf("failed to stop server: %w", err)
+	}
+	defer resp.Body.Close()
+	return checkResponse(resp, "failed to stop server")
 }
 
 // Session API Bindings for Frontend
@@ -306,11 +341,11 @@ type CreateSessionReq struct {
 }
 
 func (a *App) CreateSession(req CreateSessionReq) (map[string]interface{}, error) {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
 	// Send HTTP POST to the actual listening 4799 server instance to guarantee Session & WS port alignment!
-	resp, err := postJSON("/api/sessions", req)
+	resp, err := a.postJSON("/api/sessions", req)
 	if err != nil {
 		fmt.Printf("[pmux err] CreateSession HTTP failed: %v\n", err)
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -331,10 +366,10 @@ func (a *App) CreateSession(req CreateSessionReq) (map[string]interface{}, error
 }
 
 func (a *App) GetSessions() ([]interface{}, error) {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := daemonRequest(http.MethodGet, "/api/sessions", nil)
+	resp, err := a.daemonRequest(http.MethodGet, "/api/sessions", nil)
 	if err != nil {
 		return []interface{}{}, nil
 	}
@@ -358,10 +393,10 @@ type SplitPaneReq struct {
 }
 
 func (a *App) SplitPane(req SplitPaneReq) (map[string]interface{}, error) {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := postJSON("/api/sessions/split", req)
+	resp, err := a.postJSON("/api/sessions/split", req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to split pane: %w", err)
 	}
@@ -380,22 +415,22 @@ func (a *App) SplitPane(req SplitPaneReq) (map[string]interface{}, error) {
 }
 
 func (a *App) CloseSession(sessionID string) error {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := postJSON("/api/sessions/close-session", map[string]string{"sessionId": sessionID})
+	resp, err := a.postJSON("/api/sessions/close-session", map[string]string{"sessionId": sessionID})
 	if err != nil {
 		return fmt.Errorf("failed to close session: %w", err)
 	}
 	defer resp.Body.Close()
-	return nil
+	return checkResponse(resp, "failed to close session")
 }
 
 func (a *App) ClosePane(sessionID, paneID string) error {
-	port := server.GetServerPort()
+	port := a.daemonPort()
 	_ = server.EnsureServerRunning(port)
 
-	resp, err := postJSON("/api/sessions/close-pane", map[string]string{
+	resp, err := a.postJSON("/api/sessions/close-pane", map[string]string{
 		"sessionId": sessionID,
 		"paneId":    paneID,
 	})
@@ -403,7 +438,7 @@ func (a *App) ClosePane(sessionID, paneID string) error {
 		return fmt.Errorf("failed to close pane: %w", err)
 	}
 	defer resp.Body.Close()
-	return nil
+	return checkResponse(resp, "failed to close pane")
 }
 
 func (a *App) SelectFile() (string, error) {

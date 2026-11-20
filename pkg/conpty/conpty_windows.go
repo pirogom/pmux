@@ -253,6 +253,12 @@ func New(command string, args []string, dir string, env []string, cols, rows int
 	// 3. Initialize Thread Attribute List
 	var attrListSize uintptr
 	_, _, _ = procInitializeProcThreadAttributeList.Call(0, 1, 0, uintptr(unsafe.Pointer(&attrListSize)))
+	if attrListSize == 0 {
+		procClosePseudoConsole.Call(uintptr(hPC))
+		windows.CloseHandle(inPipeWrite)
+		windows.CloseHandle(outPipeRead)
+		return nil, fmt.Errorf("InitializeProcThreadAttributeList returned a zero-sized attribute list")
+	}
 
 	attrListBuffer := make([]byte, attrListSize)
 	attrListPtr := uintptr(unsafe.Pointer(&attrListBuffer[0]))

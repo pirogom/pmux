@@ -11,6 +11,9 @@ let noteWorkDir = '';
 let activeNoteId = null;
 let noteSaveTimer = null;
 let quill = null;
+// Serializes saves: debounced saves and explicit flushes (close/add/delete)
+// must never race and let an older snapshot overwrite a newer one.
+let noteSaveChain = Promise.resolve();
 
 const NOTE_FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '28px'];
 
@@ -91,12 +94,12 @@ export async function openNoteModal() {
     if (created) {
         await flushNoteSave();
     }
-    quill.focus();
+    if (quill) quill.focus();
 }
 
 export function closeNoteModal() {
     flushNoteSave();
-    dom.noteTitleInput.blur();
+    if (dom.noteTitleInput) dom.noteTitleInput.blur();
     if (dom.noteModalEl) dom.noteModalEl.classList.add('hidden');
 }
 
@@ -113,12 +116,17 @@ async function flushNoteSave() {
         noteSaveTimer = null;
     }
     if (!noteWorkDir) return;
-    try {
-        await callSaveNotes(noteWorkDir, noteItems);
-    } catch (e) {
-        console.error('Failed to save notes:', e);
-        showToast('Failed to save notes.', 'error');
-    }
+    // Snapshot now and chain onto the previous save so requests are sent (and
+    // applied) in order.
+    const workDir = noteWorkDir;
+    const snapshot = noteItems.map(n => ({ ...n }));
+    noteSaveChain = noteSaveChain
+        .then(() => callSaveNotes(workDir, snapshot))
+        .catch(e => {
+            console.error('Failed to save notes:', e);
+            showToast('Failed to save notes.', 'error');
+        });
+    return noteSaveChain;
 }
 
 function syncActiveNoteFromDom() {
@@ -176,7 +184,7 @@ function selectNote(id) {
     renderNoteList();
     renderActiveNote();
     scheduleNoteSave();
-    quill.focus();
+    if (quill) quill.focus();
 }
 
 async function noteAddItem() {

@@ -30,8 +30,8 @@ func newTestRepo(t *testing.T) string {
 
 	sig := &object.Signature{Name: "Test User", Email: "test@example.com"}
 	files := map[string]string{
-		"hello.txt":    "hello world\n",
-		"sub/dir.txt":  "nested\n",
+		"hello.txt":     "hello world\n",
+		"sub/dir.txt":   "nested\n",
 		"delete_me.txt": "bye\n",
 	}
 	for name, content := range files {
@@ -221,6 +221,31 @@ func TestGetDiff(t *testing.T) {
 	}
 	if res.Unstaged != "" {
 		t.Fatalf("expected no unstaged diff after staging, got %q", res.Unstaged)
+	}
+}
+
+func TestGetDiffRejectsPathEscape(t *testing.T) {
+	dir := newTestRepo(t)
+
+	// A file just outside the worktree must never be readable through the
+	// diff API.
+	secretPath := filepath.Join(filepath.Dir(dir), "pmux-secret.txt")
+	if err := os.WriteFile(secretPath, []byte("TOP SECRET\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(secretPath) })
+
+	for _, path := range []string{"../pmux-secret.txt", "..\\pmux-secret.txt"} {
+		res := GetDiff(dir, path)
+		if res.Unstaged != "" || res.Staged != "" {
+			t.Fatalf("path %q escaped the repository: staged=%q unstaged=%q", path, res.Staged, res.Unstaged)
+		}
+	}
+
+	// Staging outside the worktree must be rejected as well.
+	res := Stage(dir, []string{"../pmux-secret.txt"})
+	if res.Success {
+		t.Fatalf("Stage accepted a path outside the repository")
 	}
 }
 
@@ -753,4 +778,3 @@ func TestStage_FileModeIgnored_PreservesExecutableMode(t *testing.T) {
 		}
 	}
 }
-

@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { dom, addClick } from './dom.js';
 import { apiGet, apiPost } from './api.js';
-import { showToast, showConfirm } from './ui.js';
+import { showToast, showConfirm, escapeHtml } from './ui.js';
 import { applyGitPollInterval } from './git.js';
 import { createSessionFromProfile } from './workspace.js';
 
@@ -14,10 +14,6 @@ const collapsedFolders = new Set(JSON.parse(localStorage.getItem('pmux_folder_co
 
 function saveCollapsedState() {
     localStorage.setItem('pmux_folder_collapsed', JSON.stringify([...collapsedFolders]));
-}
-
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 export async function refreshConfigAndProfiles() {

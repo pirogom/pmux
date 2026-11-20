@@ -76,13 +76,32 @@ func TestSanitizeHistoryBuffer(t *testing.T) {
 func TestRingBufferWrapAroundSanitization(t *testing.T) {
 	rb := NewRingBuffer(20)
 	// Write initial data
-	_, _ = rb.Write([]byte("1234567890\x1b[31mABCD")) // 16 bytes
-	// Overwrite causing wrap-around that cuts into \x1b[31m
-	_, _ = rb.Write([]byte("1234567890")) // 10 bytes -> total pushed 26 > 20
+	_, _ = rb.Write([]byte("1234567890\x1b[31mABCD")) // 19 bytes
+	// Overwrite so the retained window starts inside the ANSI sequence:
+	// the buffer keeps the last 20 bytes, i.e. "[31mABCD" + the new bytes.
+	_, _ = rb.Write([]byte("123456789012")) // 12 bytes -> 31 total, window starts at index 11
 
 	out := rb.Bytes()
-	// Should produce clean output without broken '[' or partial ANSI code
+	// The broken "ESC-less" prefix must be sanitized away.
 	if bytes.Contains(out, []byte("[31m")) {
 		t.Errorf("Expected truncated ANSI to be sanitized, got: %q", out)
+	}
+	if string(out) != "ABCD123456789012" {
+		t.Errorf("unexpected sanitized output: %q", out)
+	}
+}
+
+func TestRingBufferLargeWrite(t *testing.T) {
+	rb := NewRingBuffer(8)
+	_, _ = rb.Write([]byte("0123456789")) // larger than the buffer
+	if got := string(rb.Bytes()); got != "23456789" {
+		t.Fatalf("large write should keep the tail, got %q", got)
+	}
+
+	rb2 := NewRingBuffer(8)
+	_, _ = rb2.Write([]byte("abc"))
+	_, _ = rb2.Write([]byte("defghijkl"))
+	if got := string(rb2.Bytes()); got != "efghijkl" {
+		t.Fatalf("wrapping large write should keep the tail, got %q", got)
 	}
 }

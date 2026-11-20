@@ -4,7 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import sshWhiteIcon from './assets/images/ssh-white.svg';
 import { state } from './state.js';
 import { dom, addClick } from './dom.js';
-import { apiGet, apiPost } from './api.js';
+import { apiGet, apiPost, serverWsUrl } from './api.js';
 import { showToast, showConfirm, fallbackCopyTextToClipboard } from './ui.js';
 import { reflowAllPanes, applyViewportClip, sendViewportResize } from './viewport.js';
 import { openSSHManager } from './ssh.js';
@@ -60,12 +60,21 @@ export function renderSessionList() {
     state.sessions.forEach(sess => {
         const li = document.createElement('li');
         li.title = sess.name;
-        li.innerHTML = `<span>💻 ${sess.name}</span><button class="icon-btn-small del-btn" title="Close Session">✖</button>`;
+        // Build the row with DOM APIs: session names are user-controlled and
+        // may be set by another client, so they must never be parsed as HTML.
+        const label = document.createElement('span');
+        label.textContent = `💻 ${sess.name}`;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'icon-btn-small del-btn';
+        delBtn.title = 'Close Session';
+        delBtn.textContent = '✖';
+        li.appendChild(label);
+        li.appendChild(delBtn);
         if (state.activeSession && state.activeSession.id === sess.id) {
             li.classList.add('active');
         }
         li.addEventListener('click', () => attachToSession(sess.id));
-        li.querySelector('.del-btn').addEventListener('click', async (e) => {
+        delBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             await closeSession(sess.id, sess.name);
         });
@@ -655,7 +664,7 @@ function initXtermPane(containerEl, paneData) {
     };
 
     const connectPaneWS = () => {
-        const wsUrl = `ws://127.0.0.1:${state.serverPort}/ws/pane/${paneData.id}`;
+        const wsUrl = serverWsUrl(`/ws/pane/${paneData.id}`);
         const ws = new WebSocket(wsUrl);
 
         if (state.activePanesMap.has(paneData.id)) {

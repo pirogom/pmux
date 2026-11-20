@@ -1,7 +1,13 @@
-import { state } from './state.js';
 import { dom, addClick } from './dom.js';
+import { apiPost } from './api.js';
 
 // Custom UI Components: Toast Notification & Custom Confirm Modal
+
+// escapeHtml converts a value to text safe for innerHTML interpolation.
+export function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 export function showToast(message, type = 'info') {
     // Log to console as well
     if (type === 'error') {
@@ -16,7 +22,15 @@ export function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     const icon = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-    toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+    // Build nodes instead of innerHTML: messages embed session names and
+    // server error text, which must never be parsed as markup.
+    const iconEl = document.createElement('span');
+    iconEl.textContent = icon;
+    const textEl = document.createElement('span');
+    textEl.textContent = String(message);
+    toast.appendChild(iconEl);
+    toast.appendChild(document.createTextNode(' '));
+    toast.appendChild(textEl);
     dom.toastContainerEl.appendChild(toast);
 
     setTimeout(() => {
@@ -103,7 +117,7 @@ export async function executeShutdown() {
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.KillServer) {
             await window.go.main.App.KillServer();
         } else {
-            await fetch(`http://127.0.0.1:${state.serverPort}/api/server/kill`, { method: 'POST' });
+            await apiPost('/api/server/kill');
         }
     } catch (err) {
         console.warn('KillServer error / already closing:', err);

@@ -41,6 +41,8 @@ export function GetSSHConfig():Promise<ssh.Config>;
 
 export function GetServerPort():Promise<number>;
 
+export function GetServerToken():Promise<string>;
+
 export function GetSessions():Promise<Array<any>>;
 
 export function GitCheckout(arg1:string,arg2:string):Promise<git.GitOpResult>;

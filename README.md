@@ -75,6 +75,22 @@ pmux.exe --server --log
 pmux.exe --help
 ```
 
+### Local daemon security
+
+The daemon listens on `127.0.0.1` only, but local HTTP is still reachable from
+any web page the user visits. Every request must therefore present a shared
+token:
+
+- The token is generated on first start and stored in `~/.pmux/token` (mode
+  `0600`), readable only by the same Windows user.
+- The GUI obtains it through the `GetServerToken` Wails binding; HTTP requests
+  send `Authorization: Bearer <token>` and WebSocket URLs append `?token=...`.
+- Cross-Origin requests are only allowed from the Wails webview origins
+  (`wails.localhost`, `localhost`, `127.0.0.1`); other origins receive no CORS
+  permission, and WebSocket handshakes verify the `Origin` header.
+- If you use the browser-only mode (`npm run dev` without Wails), pass the token
+  explicitly: `http://localhost:34115/?token=<token from ~/.pmux/token>`.
+
 ---
 
 ## 💡 Recommended SSH Client (Windows OpenSSH vs MSYS2 SSH)
@@ -205,6 +221,8 @@ pmux does **not** rely on the OS's built-in `conhost.exe` for its ConPTY session
 
 - Source binaries live under `resources/conpty/x64/` and `resources/conpty/x86/`, embedded per-architecture via build tags (`resources/conpty/embed_amd64.go`, `embed_386.go`) so a given build only carries the pair matching its own architecture.
 - On first use, pmux extracts (and, if the embedded content hash differs, refreshes) these two files to `%USERPROFILE%\.pmux\bin\64\` (or `\32\` for a 386 build) and loads `conpty.dll` from there — no installer step required, `pmux.exe` works standalone. If a `conpty.dll` happens to already sit next to `pmux.exe` (e.g. manual placement), that takes priority instead. If neither is usable, pmux transparently falls back to the OS's `kernel32.dll`/system `conhost.exe`.
+  > [!NOTE]
+  > Because a `conpty.dll` next to `pmux.exe` is loaded with the user's privileges, keep `pmux.exe` in a directory only you can write to (e.g. `%LOCALAPPDATA%\pmux`), not a shared/world-writable folder. The embedded copy extracted under `%USERPROFILE%\.pmux\bin` is hash-verified before use.
 
 ### Updating to a newer ConPTY host version
 

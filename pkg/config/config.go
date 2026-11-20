@@ -2,11 +2,16 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type SavedLayoutNode struct {
@@ -37,15 +42,22 @@ type ProfileFolder struct {
 }
 
 type Config struct {
-	DefaultProfileID string           `json:"defaultProfileId"`
-	Profiles         []Profile        `json:"profiles"`
-	ProfileFolders   []ProfileFolder  `json:"profileFolders"`
-	ServerPort       int              `json:"serverPort"`
-	Theme            string           `json:"theme"`
-	GitPollInterval  int              `json:"gitPollInterval"`
+	DefaultProfileID string          `json:"defaultProfileId"`
+	Profiles         []Profile       `json:"profiles"`
+	ProfileFolders   []ProfileFolder `json:"profileFolders"`
+	ServerPort       int             `json:"serverPort"`
+	Theme            string          `json:"theme"`
+	GitPollInterval  int             `json:"gitPollInterval"`
 }
 
+// mu serializes config access inside this process. Cross-process access (the
+// GUI process and the background daemon both read/write config.json) is
+// serialized by an OS file lock (see lock_*.go).
 var mu sync.Mutex
+
+// ErrNoChange is returned by an Update callback to signal that nothing was
+// modified, so the config file does not need to be rewritten.
+var ErrNoChange = errors.New("config: no change")
 
 func GetConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -67,46 +79,125 @@ func getConfigFile() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-func LoadConfig() (*Config, error) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	configFile, err := getConfigFile()
+// withFileLock runs fn while holding an exclusive cross-process lock on
+// ~/.pmux/config.lock. If the lock file cannot be created/locked (e.g. a
+// read-only home directory) fn still runs, protected by the in-process mutex.
+func withFileLock(fn func() error) error {
+	dir, err := GetConfigDir()
 	if err != nil {
-		return nil, err
+		return fn()
 	}
+	lockPath := filepath.Join(dir, "config.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fn()
+	}
+	defer f.Close()
+	if err := lockFile(f); err != nil {
+		return fn()
+	}
+	defer func() { _ = unlockFile(f) }()
+	return fn()
+}
 
-	cfg := &Config{
+func defaultConfig() *Config {
+	return &Config{
 		ServerPort:      4799,
 		Theme:           "dark",
 		GitPollInterval: 3,
 		Profiles:        []Profile{},
 		ProfileFolders:  []ProfileFolder{},
 	}
+}
+
+// LoadConfig reads ~/.pmux/config.json. A missing file is created with
+// defaults. A corrupt file is preserved as config.json.corrupt-<timestamp> and
+// replaced with defaults, so user data is never silently overwritten.
+func LoadConfig() (*Config, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	var cfg *Config
+	err := withFileLock(func() error {
+		var e error
+		cfg, e = loadLocked()
+		return e
+	})
+	return cfg, err
+}
+
+// Update performs an atomic read-modify-write of the config while holding both
+// the in-process mutex and the cross-process file lock. The callback must not
+// call LoadConfig/SaveConfig. Returning ErrNoChange skips the write.
+func Update(fn func(*Config) error) error {
+	if fn == nil {
+		return nil
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
+	return withFileLock(func() error {
+		cfg, err := loadLocked()
+		if err != nil {
+			return err
+		}
+		if err := fn(cfg); err != nil {
+			if errors.Is(err, ErrNoChange) {
+				return nil
+			}
+			return err
+		}
+		return saveLocked(cfg)
+	})
+}
+
+func loadLocked() (*Config, error) {
+	configFile, err := getConfigFile()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := defaultConfig()
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		// 기본 설정 생성 및 저장
-		SaveConfigLocked(cfg)
+		if err := saveLocked(cfg); err != nil {
+			return cfg, err
+		}
 		return cfg, nil
 	}
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		if cfg.GitPollInterval <= 0 {
-			cfg.GitPollInterval = 3
-		}
-		return cfg, nil
+		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
 	if err := json.Unmarshal(data, cfg); err != nil {
-		if cfg.GitPollInterval <= 0 {
-			cfg.GitPollInterval = 3
+		// Preserve the unparsable file for manual recovery instead of letting
+		// the next save destroy it.
+		backup := fmt.Sprintf("%s.corrupt-%d", configFile, time.Now().Unix())
+		if writeErr := os.WriteFile(backup, data, 0600); writeErr != nil {
+			log.Printf("[config] failed to back up corrupt config: %v", writeErr)
+		} else {
+			log.Printf("[config] config.json was corrupt (%v); saved a copy to %s and reset to defaults", err, backup)
+		}
+		cfg = defaultConfig()
+		if saveErr := saveLocked(cfg); saveErr != nil {
+			return cfg, saveErr
 		}
 		return cfg, nil
 	}
 
 	if cfg.GitPollInterval <= 0 {
 		cfg.GitPollInterval = 3
+	}
+	if cfg.ServerPort <= 0 {
+		cfg.ServerPort = 4799
+	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = []Profile{}
+	}
+	if cfg.ProfileFolders == nil {
+		cfg.ProfileFolders = []ProfileFolder{}
 	}
 
 	return cfg, nil
@@ -115,10 +206,21 @@ func LoadConfig() (*Config, error) {
 func SaveConfig(cfg *Config) error {
 	mu.Lock()
 	defer mu.Unlock()
-	return SaveConfigLocked(cfg)
+	return withFileLock(func() error { return saveLocked(cfg) })
 }
 
+// SaveConfigLocked is retained for callers that already hold the package
+// mutex (it is not safe to call from outside this package without Update).
 func SaveConfigLocked(cfg *Config) error {
+	return saveLocked(cfg)
+}
+
+// saveLocked writes the config atomically (temp file + rename) so a crash
+// during the write can never leave a truncated config.json behind.
+func saveLocked(cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config: nil config")
+	}
 	configFile, err := getConfigFile()
 	if err != nil {
 		return err
@@ -129,7 +231,27 @@ func SaveConfigLocked(cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile(configFile, data, 0644)
+	tmp := configFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+
+	// os.Rename replaces the destination atomically on Windows only when the
+	// target is not open elsewhere; retry briefly before falling back.
+	var renameErr error
+	for i := 0; i < 5; i++ {
+		if renameErr = os.Rename(tmp, configFile); renameErr == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := os.WriteFile(configFile, data, 0600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	_ = os.Remove(tmp)
+	return nil
 }
 
 func CleanName(name string) string {
@@ -141,26 +263,64 @@ func CleanName(name string) string {
 	return name
 }
 
+// NewProfileID returns a collision-free profile identifier. The previous
+// "profile_<len+1>" scheme reused IDs after deletions and silently overwrote
+// existing profiles.
+func NewProfileID() string {
+	return "profile_" + uuid.NewString()
+}
+
+// NewFolderID returns a collision-free profile folder identifier.
+func NewFolderID() string {
+	return "folder_" + uuid.NewString()
+}
+
+// UpsertProfile inserts or updates a profile by ID. When updating, an omitted
+// saved layout / folder is inherited from the existing entry so partial
+// updates from the UI do not erase persisted state.
+func (cfg *Config) UpsertProfile(p Profile) {
+	p.Name = CleanName(p.Name)
+
+	for i, existing := range cfg.Profiles {
+		if p.ID != "" && existing.ID == p.ID {
+			if p.SavedLayout == nil && existing.SavedLayout != nil {
+				p.SavedLayout = existing.SavedLayout
+			}
+			if p.Folder == "" && existing.Folder != "" {
+				p.Folder = existing.Folder
+			}
+			cfg.Profiles[i] = p
+			return
+		}
+	}
+
+	if p.ID == "" {
+		p.ID = NewProfileID()
+	}
+	cfg.Profiles = append(cfg.Profiles, p)
+}
+
+// DeleteProfile removes the profile with the given ID.
+func (cfg *Config) DeleteProfile(id string) {
+	if id == "" {
+		return
+	}
+	newProfiles := make([]Profile, 0, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		if p.ID != id {
+			newProfiles = append(newProfiles, p)
+		}
+	}
+	cfg.Profiles = newProfiles
+}
+
 // CreateFolder adds a new folder and returns its generated ID.
 func (cfg *Config) CreateFolder(name string) string {
 	name = CleanName(name)
 	if name == "" {
 		name = "New Folder"
 	}
-	id := fmt.Sprintf("folder_%d", len(cfg.ProfileFolders)+1)
-	for i := 0; ; i++ {
-		exists := false
-		for _, f := range cfg.ProfileFolders {
-			if f.ID == id {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			break
-		}
-		id = fmt.Sprintf("folder_%d", len(cfg.ProfileFolders)+1+i)
-	}
+	id := NewFolderID()
 	cfg.ProfileFolders = append(cfg.ProfileFolders, ProfileFolder{ID: id, Name: name})
 	return id
 }

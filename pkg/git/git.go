@@ -28,6 +28,7 @@ type GitChange struct {
 type GitStatusResult struct {
 	IsGitRepo bool        `json:"isGitRepo"`
 	Branch    string      `json:"branch"`
+	HeadHash  string      `json:"headHash,omitempty"`
 	Root      string      `json:"root,omitempty"`
 	Changes   []GitChange `json:"changes"`
 	Error     string      `json:"error,omitempty"`
@@ -184,4 +185,3 @@ func headFileHash(b *repoBundle, path string) (plumbing.Hash, bool) {
 	}
 	return f.Hash, true
 }
-

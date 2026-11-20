@@ -116,7 +116,14 @@ export async function openWorkFolder() {
 let selectedDiffPath = null;
 let selectedCommitHash = null;
 
+// Guards against overlapping polls when a repository is slow to inspect.
+let gitStatusInFlight = false;
+// Last rendered status signature, used to skip redundant DOM rebuilds.
+let lastGitSignature = '';
+let lastBranchListKey = '';
+
 export async function updateGitStatus() {
+    if (gitStatusInFlight || document.hidden) return;
     const workDir = getActiveWorkDir();
     if (!workDir) {
         updateGitButtonBadge(0);
@@ -127,12 +134,15 @@ export async function updateGitStatus() {
     }
 
     let res = null;
+    gitStatusInFlight = true;
     try {
         res = await callGitStatus(workDir);
     } catch (e) {
         console.error('git status failed:', e);
         updateGitButtonBadge(0);
         return;
+    } finally {
+        gitStatusInFlight = false;
     }
 
     if (!res || !res.isGitRepo) {
@@ -143,24 +153,35 @@ export async function updateGitStatus() {
         return;
     }
 
-    const changeCount = (res.changes && res.changes.length) ? res.changes.length : 0;
+    const changes = res.changes || [];
+    const changeCount = changes.length;
     updateGitButtonBadge(changeCount);
 
     if (dom.gitPanelEl.classList.contains('hidden')) return;
 
+    const signature = (res.branch || '') + '|' + (res.headHash || '') + '|' + changes
+        .map(ch => `${ch.path}:${ch.status}:${ch.staged ? 1 : 0}:${ch.unstaged ? 1 : 0}`)
+        .join(',');
+    if (signature === lastGitSignature) {
+        // Nothing changed since the last render: avoid rebuilding the DOM
+        // every poll tick.
+        return;
+    }
+    lastGitSignature = signature;
+
     dom.gitBranchBadgeEl.textContent = res.branch || 'main';
     dom.gitBranchBadgeEl.title = res.root || '';
 
-    const stagedCount = res.changes ? res.changes.filter(ch => ch.staged).length : 0;
+    const stagedCount = changes.filter(ch => ch.staged).length;
     if (dom.gitStagedCountEl) dom.gitStagedCountEl.textContent = `${stagedCount} staged`;
     if (dom.gitChangesCountEl) dom.gitChangesCountEl.textContent = `${changeCount}`;
 
-    renderGitChanges(workDir, res.changes);
+    renderGitChanges(workDir, changes);
 
     // Refresh the diff preview for the currently selected file, if it still
     // shows up in the status.
     if (selectedDiffPath) {
-        const stillThere = res.changes && res.changes.some(ch => ch.path === selectedDiffPath);
+        const stillThere = changes.some(ch => ch.path === selectedDiffPath);
         if (stillThere) {
             showDiff(workDir, selectedDiffPath);
         } else {
@@ -178,6 +199,8 @@ function renderGitEmpty(msg) {
     if (dom.gitLogContainerEl) dom.gitLogContainerEl.innerHTML = '';
     if (dom.gitStagedCountEl) dom.gitStagedCountEl.textContent = '';
     if (dom.gitChangesCountEl) dom.gitChangesCountEl.textContent = '';
+    lastGitSignature = '';
+    lastBranchListKey = '';
     clearGitLogState();
 }
 
@@ -391,6 +414,11 @@ async function renderGitBranches(workDir, currentBranch) {
     // Don't clobber the dropdown while the user is interacting with it.
     if (document.activeElement === dom.gitBranchSelectEl) return;
 
+    // The branch list only changes when the checked-out branch changes or the
+    // user refreshes; avoid re-reading it on every status poll.
+    const key = `${workDir}|${currentBranch || ''}`;
+    if (key === lastBranchListKey && dom.gitBranchSelectEl.options.length > 0) return;
+
     let branches = [];
     try {
         branches = await callGitBranches(workDir);
@@ -398,6 +426,7 @@ async function renderGitBranches(workDir, currentBranch) {
         return;
     }
     if (!Array.isArray(branches)) return;
+    lastBranchListKey = key;
 
     const selected = currentBranch || dom.gitBranchSelectEl.value;
     dom.gitBranchSelectEl.innerHTML = '';
@@ -839,11 +868,12 @@ async function showCommitDetail(workDir, hash) {
         dom.gitCommitContentEl.textContent = `Error: ${res.error}`;
     } else {
         dom.gitCommitPathEl.textContent = `commit ${res.shortHash || hash}`;
+        const message = (res.message || '').replace(/\n/g, '\n    ');
         const header =
             `commit ${res.hash}\n` +
             `Author: ${res.author} <${res.email}>\n` +
             `Date:   ${res.date}\n` +
-            `\n    ${res.message.replace(/\n/g, '\n    ')}\n`;
+            `\n    ${message}\n`;
         renderGitDiff(dom.gitCommitContentEl, header + (res.diff || '(no diff)'));
     }
     dom.gitCommitViewEl.classList.remove('hidden');
@@ -888,7 +918,17 @@ export function initGitEvents() {
 
     addClick('btn-git-refresh', () => {
         gitLogForceReload = true;
+        lastGitSignature = '';
+        lastBranchListKey = '';
         updateGitStatus();
+    });
+
+    // Catch up immediately when the window becomes visible again (polling is
+    // suspended while the document is hidden).
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            updateGitStatus();
+        }
     });
 
     // Git panel actions
@@ -953,6 +993,8 @@ export function initGitEvents() {
             if (!workDir || !branch) return;
             const res = await callGitCheckout(workDir, branch);
             showOpOutput(res);
+            lastBranchListKey = '';
+            lastGitSignature = '';
             await updateGitStatus();
         });
     }

@@ -1,6 +1,7 @@
 // Shared application state
 export const state = {
     serverPort: 4799,
+    serverToken: '',
     activeSession: null,
     activePaneId: null,
     sessions: [],

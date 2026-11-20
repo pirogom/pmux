@@ -110,6 +110,7 @@ func TestProfileLayoutPersistenceAndRestoration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession from saved profile failed: %v", err)
 	}
+	defer sm.CloseSession(sess2.ID)
 	if firstPane == nil {
 		t.Fatalf("Expected non-nil firstPane")
 	}
@@ -121,4 +122,83 @@ func TestProfileLayoutPersistenceAndRestoration(t *testing.T) {
 	}
 
 	_ = filepath.Clean(tempDir)
+}
+
+// Layouts must only be persisted to a profile matched by ID. The old
+// name-prefix fallback could silently attach a layout to the wrong profile.
+func TestLayoutPersistenceRequiresProfileID(t *testing.T) {
+	cfg := &config.Config{
+		Profiles:   []config.Profile{{ID: "p1", Name: "Shell"}},
+		ServerPort: 4799,
+	}
+	if err := config.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	// No profile ID, but the session name matches the profile name: must NOT save.
+	sess := &Session{
+		ID:        "s1",
+		Name:      "Shell",
+		ProfileID: "",
+		Layout:    &LayoutNode{Direction: SplitVertical, Children: []*LayoutNode{{ID: "a"}, {ID: "b"}}},
+		Panes: map[string]*Pane{
+			"a": {ID: "a", Command: "cmd.exe"},
+			"b": {ID: "b", Command: "cmd.exe"},
+		},
+	}
+	layout, seq := persistLayoutLocked(sess)
+	saveLayoutSnapshot(sess, layout, seq)
+
+	got, err := config.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got.Profiles[0].SavedLayout != nil {
+		t.Fatalf("layout must not be saved without a profile ID")
+	}
+
+	// With the ID it is persisted.
+	sess.ProfileID = "p1"
+	layout, seq = persistLayoutLocked(sess)
+	saveLayoutSnapshot(sess, layout, seq)
+
+	got, _ = config.LoadConfig()
+	if got.Profiles[0].SavedLayout == nil || len(got.Profiles[0].SavedLayout.Children) != 2 {
+		t.Fatalf("expected the layout to be saved by profile ID, got %+v", got.Profiles[0].SavedLayout)
+	}
+}
+
+// An older snapshot must never overwrite a newer one.
+func TestSaveLayoutSnapshotIgnoresStaleSequence(t *testing.T) {
+	cfg := &config.Config{Profiles: []config.Profile{{ID: "p1", Name: "Shell"}}, ServerPort: 4799}
+	if err := config.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	sess := &Session{
+		ID:        "s1",
+		ProfileID: "p1",
+		Layout:    &LayoutNode{Direction: SplitVertical, Children: []*LayoutNode{{ID: "a"}, {ID: "b"}}},
+		Panes: map[string]*Pane{
+			"a": {ID: "a", Command: "cmd.exe"},
+			"b": {ID: "b", Command: "cmd.exe"},
+		},
+	}
+	oldLayout, oldSeq := persistLayoutLocked(sess)
+
+	// A newer snapshot is taken (and persisted) first.
+	sess.Layout = &LayoutNode{Direction: SplitVertical, Children: []*LayoutNode{{ID: "a"}}}
+	newLayout, newSeq := persistLayoutLocked(sess)
+	saveLayoutSnapshot(sess, newLayout, newSeq)
+
+	// The stale snapshot must be dropped.
+	saveLayoutSnapshot(sess, oldLayout, oldSeq)
+
+	got, _ := config.LoadConfig()
+	if got.Profiles[0].SavedLayout == nil {
+		t.Fatalf("expected a saved layout")
+	}
+	if len(got.Profiles[0].SavedLayout.Children) != 1 {
+		t.Fatalf("stale snapshot overwrote the newer one: %+v", got.Profiles[0].SavedLayout)
+	}
 }

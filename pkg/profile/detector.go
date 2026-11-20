@@ -162,12 +162,18 @@ func detectVisualStudioProfiles() []config.Profile {
 	// 2. Static candidate fallbacks (VS 2022 & VS 2019 across drives)
 	years := []string{"2022", "2019"}
 	editions := []string{"Community", "Professional", "Enterprise", "BuildTools"}
-	baseDrives := []string{
-		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft Visual Studio"),
-		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft Visual Studio"),
+	var baseDrives []string
+	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
+		// An unset env var must not turn into a relative path like
+		// "Microsoft Visual Studio".
+		if root := os.Getenv(env); root != "" {
+			baseDrives = append(baseDrives, filepath.Join(root, "Microsoft Visual Studio"))
+		}
+	}
+	baseDrives = append(baseDrives,
 		`D:\Program Files\Microsoft Visual Studio`,
 		`D:\Program Files (x86)\Microsoft Visual Studio`,
-	}
+	)
 
 	for _, drive := range baseDrives {
 		if drive == "" {

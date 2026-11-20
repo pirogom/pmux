@@ -33,11 +33,26 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	for _, b := range p {
-		r.buf[r.head] = b
-		r.head = (r.head + 1) % r.maxSize
-		if r.size < r.maxSize {
-			r.size++
+	// Copy in at most two memcpys instead of looping byte by byte (terminal
+	// output arrives in 64KB chunks, so this is a hot path).
+	if n >= r.maxSize {
+		// Only the tail of p fits.
+		p = p[n-r.maxSize:]
+		copy(r.buf, p)
+		r.head = 0
+		r.size = r.maxSize
+		return n, nil
+	}
+
+	first := copy(r.buf[r.head:], p)
+	if first < n {
+		copy(r.buf, p[first:])
+	}
+	r.head = (r.head + n) % r.maxSize
+	if r.size < r.maxSize {
+		r.size += n
+		if r.size > r.maxSize {
+			r.size = r.maxSize
 		}
 	}
 	return n, nil
@@ -217,5 +232,3 @@ func StripTerminalQueries(data []byte) []byte {
 
 	return buf.Bytes()
 }
-
-

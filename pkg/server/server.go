@@ -24,6 +24,7 @@ import (
 
 type Server struct {
 	port         int
+	token        string
 	sessionMgr   *SessionManager
 	srv          *http.Server
 	eventClients map[*websocket.Conn]bool
@@ -37,6 +38,7 @@ func NewServer(port int) *Server {
 	}
 	s := &Server{
 		port:         port,
+		token:        MustToken(),
 		sessionMgr:   NewSessionManager(),
 		eventClients: make(map[*websocket.Conn]bool),
 	}
@@ -114,6 +116,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/sessions/active-pane", s.handleSetActivePane)
 	mux.HandleFunc("/api/sessions/open-work-folder", s.handleOpenWorkFolder)
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
+	mux.HandleFunc("/api/profiles/delete", s.handleProfileDelete)
 	mux.HandleFunc("/api/profiles/move", s.handleProfileMove)
 	mux.HandleFunc("/api/profiles/notify-change", s.handleProfilesNotifyChange)
 	mux.HandleFunc("/api/profile-folders/create", s.handleProfileFolderCreate)
@@ -148,25 +151,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/ws/events", s.handleWSEvents)
 
 	s.srv = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler: corsMiddleware(mux),
+		Addr:              fmt.Sprintf("127.0.0.1:%d", s.port),
+		Handler:           corsMiddleware(s.authMiddleware(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	log.Printf("[pmux server] Started listening on http://127.0.0.1:%d", s.port)
 	return s.srv.ListenAndServe()
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +199,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			"session": sess,
 			"pane":    pane,
 		})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -270,13 +263,10 @@ func (s *Server) handleSaveGitPollInterval(w http.ResponseWriter, r *http.Reques
 	} else if req.Interval > 10 {
 		req.Interval = 10
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg.GitPollInterval = req.Interval
-	if err := config.SaveConfig(cfg); err != nil {
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.GitPollInterval = req.Interval
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -413,32 +403,10 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			p.Name = string(runes[:256])
 		}
 
-		cfg, err := config.LoadConfig()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		found := false
-		for i, existing := range cfg.Profiles {
-			if existing.ID == p.ID {
-				if p.SavedLayout == nil && existing.SavedLayout != nil {
-					p.SavedLayout = existing.SavedLayout
-				}
-				if p.Folder == "" && existing.Folder != "" {
-					p.Folder = existing.Folder
-				}
-				cfg.Profiles[i] = p
-				found = true
-				break
-			}
-		}
-		if !found {
-			if p.ID == "" {
-				p.ID = fmt.Sprintf("profile_%d", len(cfg.Profiles)+1)
-			}
-			cfg.Profiles = append(cfg.Profiles, p)
-		}
-		if err := config.SaveConfig(cfg); err != nil {
+		if err := config.Update(func(cfg *config.Config) error {
+			cfg.UpsertProfile(p)
+			return nil
+		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -455,6 +423,34 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(cfg.Profiles)
 }
 
+func (s *Server) handleProfileDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "missing profile id", http.StatusBadRequest)
+		return
+	}
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.DeleteProfile(req.ID)
+		return nil
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastEvent("profiles_updated", nil)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
 func (s *Server) handleProfileMove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -469,13 +465,10 @@ func (s *Server) handleProfileMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg.MoveProfile(req.ProfileID, req.FolderID, req.Index)
-	if err := config.SaveConfig(cfg); err != nil {
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.MoveProfile(req.ProfileID, req.FolderID, req.Index)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -495,13 +488,11 @@ func (s *Server) handleProfileFolderCreate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	id := cfg.CreateFolder(req.Name)
-	if err := config.SaveConfig(cfg); err != nil {
+	var id string
+	if err := config.Update(func(cfg *config.Config) error {
+		id = cfg.CreateFolder(req.Name)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -522,13 +513,10 @@ func (s *Server) handleProfileFolderRename(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg.RenameFolder(req.ID, req.Name)
-	if err := config.SaveConfig(cfg); err != nil {
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.RenameFolder(req.ID, req.Name)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -548,13 +536,10 @@ func (s *Server) handleProfileFolderDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg.DeleteFolder(req.ID)
-	if err := config.SaveConfig(cfg); err != nil {
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.DeleteFolder(req.ID)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -574,13 +559,10 @@ func (s *Server) handleProfileFolderReorder(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg.ReorderProfileFolders(req.IDs)
-	if err := config.SaveConfig(cfg); err != nil {
+	if err := config.Update(func(cfg *config.Config) error {
+		cfg.ReorderProfileFolders(req.IDs)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -879,7 +861,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		OriginPatterns: wsOriginPatterns,
 	})
 	if err != nil {
 		log.Printf("WS Accept error for pane %s: %v", paneID, err)
@@ -998,7 +980,7 @@ func (s *Server) handleWSPane(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWSEvents(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		OriginPatterns: wsOriginPatterns,
 	})
 	if err != nil {
 		log.Printf("WS Event Accept error: %v", err)
@@ -1024,16 +1006,45 @@ func (s *Server) handleWSEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var (
+	portCacheMu  sync.Mutex
+	portCacheVal int
+	portCacheAt  time.Time
+)
+
+// GetServerPort returns the configured daemon port. The value is cached
+// briefly because this is called on every GUI binding/request and reading the
+// config now takes a cross-process file lock.
 func GetServerPort() int {
+	portCacheMu.Lock()
+	defer portCacheMu.Unlock()
+
+	if portCacheVal > 0 && time.Since(portCacheAt) < 5*time.Second {
+		return portCacheVal
+	}
+
 	cfg, err := config.LoadConfig()
-	if err != nil || cfg.ServerPort <= 0 {
+	if err != nil || cfg == nil || cfg.ServerPort <= 0 {
 		return 4799
 	}
-	return cfg.ServerPort
+	portCacheVal = cfg.ServerPort
+	portCacheAt = time.Now()
+	return portCacheVal
 }
 
 func IsServerRunning(port int) bool {
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/health", port))
+	token, err := GetToken()
+	if err != nil || token == "" {
+		return false
+	}
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/health", port), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -1058,6 +1069,11 @@ func EnsureServerRunning(port int) error {
 		return nil
 	}
 
+	token, err := GetToken()
+	if err != nil || token == "" {
+		return errNoToken
+	}
+
 	// Spawn independent background server daemon process
 	execPath, err := os.Executable()
 	if err != nil {
@@ -1065,6 +1081,9 @@ func EnsureServerRunning(port int) error {
 	}
 
 	cmd := exec.Command(execPath, "--server", "--port", strconv.Itoa(port))
+	// Pass the token explicitly so both processes agree even if ~/.pmux is not
+	// writable.
+	cmd.Env = append(os.Environ(), "PMUX_TOKEN="+token)
 	prepareCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start background server daemon: %w", err)

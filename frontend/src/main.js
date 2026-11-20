@@ -25,7 +25,18 @@ window.addEventListener('DOMContentLoaded', async () => {
         try {
             if (window.go && window.go.main && window.go.main.App) {
                 state.serverPort = await window.go.main.App.GetServerPort();
+                if (window.go.main.App.GetServerToken) {
+                    state.serverToken = await window.go.main.App.GetServerToken();
+                }
                 state.detectedPresets = await window.go.main.App.GetDetectedProfiles();
+                isAppInitialized = true;
+            } else {
+                // Browser/dev fallback: the token must be supplied explicitly.
+                const params = new URLSearchParams(location.search);
+                state.serverToken = params.get('token') || localStorage.getItem('pmux_server_token') || '';
+                if (!state.serverToken) {
+                    console.warn('[pmux] No daemon token: open this page with ?token=<~/.pmux/token> or set localStorage.pmux_server_token.');
+                }
                 isAppInitialized = true;
             }
         } catch (e) {

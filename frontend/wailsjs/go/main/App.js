@@ -74,6 +74,10 @@ export function GetServerPort() {
   return window['go']['main']['App']['GetServerPort']();
 }
 
+export function GetServerToken() {
+  return window['go']['main']['App']['GetServerToken']();
+}
+
 export function GetSessions() {
   return window['go']['main']['App']['GetSessions']();
 }

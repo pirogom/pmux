@@ -5,6 +5,24 @@ import { showToast, showConfirm } from './ui.js';
 
 const DEFAULT_SSH_CLIENT_PATH = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe';
 
+// Hosts are typed into the pane's shell, so they must not be able to carry
+// shell metacharacters (a shared *.pmuxssh export could otherwise inject
+// commands when the user clicks Connect). Allowed: hostnames, IPv4/IPv6,
+// user@host, host:port and ssh:// URLs.
+const SAFE_SSH_HOST_RE = /^[A-Za-z0-9._:@\/\[\]-]+$/;
+const SAFE_SSH_USER_RE = /^[A-Za-z0-9._-]+$/;
+
+function validateSSHTarget(host, user) {
+    if (!host) return 'Host address is required.';
+    if (!SAFE_SSH_HOST_RE.test(host)) {
+        return 'Host address contains unsupported characters (allowed: letters, digits, . _ - : @ / [ ]).';
+    }
+    if (user && !SAFE_SSH_USER_RE.test(user)) {
+        return 'Account contains unsupported characters (allowed: letters, digits, . _ -).';
+    }
+    return '';
+}
+
 let sshConfig = null;
 let sshPaneId = null;
 let editingSshAddressId = null;
@@ -170,6 +188,11 @@ async function saveSSHAddressFromModal() {
         showToast('Please specify name and host address', 'error');
         return;
     }
+    const invalid = validateSSHTarget(host, dom.sshAddrUserInput.value.trim());
+    if (invalid) {
+        showToast(invalid, 'error');
+        return;
+    }
 
     const addr = {
         id: editingSshAddressId || `ssh_addr_${Date.now()}`,
@@ -214,16 +237,25 @@ function sshConnect(addr) {
         return;
     }
 
+    const invalid = validateSSHTarget(addr.host, addr.user);
+    if (invalid) {
+        showToast(invalid, 'error');
+        return;
+    }
+
     const clientPath = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
+    // Always quote the target: even with validation this keeps shell parsing
+    // predictable (and the value can never start a new command).
+    const quotedTarget = `"${target}"`;
     let cmd;
     if (!clientPath || clientPath.trim().toLowerCase() === DEFAULT_SSH_CLIENT_PATH.toLowerCase()) {
         // System OpenSSH lives in System32, which is always on PATH
-        cmd = `ssh ${target}`;
+        cmd = `ssh ${quotedTarget}`;
     } else {
         const shell = (paneEntry.command || '').toLowerCase();
         const isPowershell = shell.includes('powershell') || shell.includes('pwsh');
         const quoted = `"${clientPath.trim()}"`;
-        cmd = isPowershell ? `& ${quoted} ${target}` : `${quoted} ${target}`;
+        cmd = isPowershell ? `& ${quoted} ${quotedTarget}` : `${quoted} ${quotedTarget}`;
     }
 
     paneEntry.ws.send(JSON.stringify({ type: 'input', data: cmd + '\r' }));
@@ -343,6 +375,11 @@ async function doImportSSH(password) {
             dom.sshClientPathInput.value = (sshConfig && sshConfig.clientPath) || DEFAULT_SSH_CLIENT_PATH;
         }
         renderSSHAddressList();
+        const invalidCount = (sshConfig && sshConfig.addresses ? sshConfig.addresses : [])
+            .filter(a => validateSSHTarget(a.host, a.user)).length;
+        if (invalidCount > 0) {
+            showToast(`${invalidCount} imported address(es) contain unsupported characters and cannot be connected.`, 'warning');
+        }
         showToast('SSH addresses imported', 'success');
     } catch (e) {
         const msg = (e && e.message) || String(e);

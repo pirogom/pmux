@@ -2,10 +2,12 @@ package git
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -14,6 +16,9 @@ import (
 	"github.com/skeema/knownhosts"
 	"golang.org/x/crypto/ssh"
 )
+
+// knownHostsMu serializes appends to ~/.ssh/known_hosts.
+var knownHostsMu sync.Mutex
 
 // resolveAuth determines the best available authentication method for the
 // given remote, reusing credentials already present on the system:
@@ -77,19 +82,53 @@ func sshKeyAuth(user string) (transport.AuthMethod, string, error) {
 	return nil, "", fmt.Errorf("no usable ssh key found in %s", filepath.Join(home, ".ssh"))
 }
 
-// hostKeyCallback verifies against ~/.ssh/known_hosts when available, falling
-// back to insecure host key checking otherwise.
+// hostKeyCallback verifies the server key against ~/.ssh/known_hosts. Unknown
+// hosts are trusted on first use and appended to known_hosts (like OpenSSH's
+// StrictHostKeyChecking=accept-new); a changed key is always rejected. It never
+// falls back to "accept anything".
 func hostKeyCallback() ssh.HostKeyCallback {
 	home, err := os.UserHomeDir()
-	if err == nil {
-		known := filepath.Join(home, ".ssh", "known_hosts")
-		if fi, err := os.Stat(known); err == nil && fi.Size() > 0 {
-			if cb, err := knownhosts.New(known); err == nil {
-				return ssh.HostKeyCallback(cb)
-			}
+	if err != nil {
+		return func(string, net.Addr, ssh.PublicKey) error {
+			return fmt.Errorf("cannot verify host key: home directory unavailable: %w", err)
 		}
 	}
-	return ssh.InsecureIgnoreHostKey()
+
+	known := filepath.Join(home, ".ssh", "known_hosts")
+	if _, statErr := os.Stat(known); statErr != nil {
+		if mkErr := os.MkdirAll(filepath.Dir(known), 0700); mkErr == nil {
+			_ = os.WriteFile(known, nil, 0600)
+		}
+	}
+
+	cb, err := knownhosts.New(known)
+	if err != nil {
+		return func(string, net.Addr, ssh.PublicKey) error {
+			return fmt.Errorf("cannot load known_hosts: %w", err)
+		}
+	}
+
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		verifyErr := cb(hostname, remote, key)
+		if verifyErr == nil {
+			return nil
+		}
+		if !knownhosts.IsHostUnknown(verifyErr) {
+			return verifyErr
+		}
+		// Trust on first use: persist the key so later connections verify it.
+		knownHostsMu.Lock()
+		defer knownHostsMu.Unlock()
+		f, openErr := os.OpenFile(known, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return verifyErr
+		}
+		defer f.Close()
+		if writeErr := knownhosts.WriteKnownHost(f, hostname, remote, key); writeErr != nil {
+			return verifyErr
+		}
+		return nil
+	}
 }
 
 // httpsAuth looks up stored HTTPS credentials for host, first in the Windows
@@ -169,12 +208,28 @@ func parseRemoteURL(raw string) (isSSH bool, user, host string) {
 		return false, "", ""
 	default:
 		// scp-like syntax: [user@]host:path
-		if strings.Contains(raw, ":") {
-			before := raw[:strings.Index(raw, ":")]
-			if at := strings.LastIndex(before, "@"); at != -1 {
-				return true, before[:at], before[at+1:]
-			}
+		colon := strings.Index(raw, ":")
+		if colon <= 0 {
+			return false, "", "" // local path
 		}
-		return false, "", "" // local path
+		before := raw[:colon]
+		// A Windows drive letter (C:\..., C:/...) or a path containing a
+		// separator is a local path, not a remote.
+		if len(before) == 1 && isASCIILetter(before[0]) {
+			return false, "", ""
+		}
+		if strings.ContainsAny(before, `/\`) {
+			return false, "", ""
+		}
+		if at := strings.LastIndex(before, "@"); at != -1 {
+			return true, before[:at], before[at+1:]
+		}
+		// host:path without a user is still SSH (previously misclassified as
+		// a local path).
+		return true, "", before
 	}
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

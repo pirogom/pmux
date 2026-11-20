@@ -2,9 +2,40 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestMain redirects the home directory so the tests never touch the user's
+// real ~/.pmux/config.json.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "pmux_cfg_test_*")
+	if err != nil {
+		panic(err)
+	}
+	origHome, hadHome := os.LookupEnv("HOME")
+	origProfile, hadProfile := os.LookupEnv("USERPROFILE")
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("USERPROFILE", dir)
+
+	code := m.Run()
+
+	if hadHome {
+		_ = os.Setenv("HOME", origHome)
+	} else {
+		_ = os.Unsetenv("HOME")
+	}
+	if hadProfile {
+		_ = os.Setenv("USERPROFILE", origProfile)
+	} else {
+		_ = os.Unsetenv("USERPROFILE")
+	}
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 func TestLoadConfig(t *testing.T) {
 	cfg, err := LoadConfig()
@@ -187,4 +218,138 @@ func TestReorderProfileFolders(t *testing.T) {
 	if cfg2.ProfileFolders[0].ID != "f2" || cfg2.ProfileFolders[1].ID != "f1" {
 		t.Errorf("partial reorder should give f2,f1, got %+v", cfg2.ProfileFolders)
 	}
+}
+
+func TestUpdateIsAtomicAndSkipsNoChange(t *testing.T) {
+	cfg := &Config{Profiles: []Profile{{ID: "p1", Name: "One"}}, ServerPort: 4799, GitPollInterval: 3}
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	if err := Update(func(c *Config) error {
+		c.GitPollInterval = 7
+		return nil
+	}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	got, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got.GitPollInterval != 7 {
+		t.Fatalf("expected interval 7, got %d", got.GitPollInterval)
+	}
+
+	before, _ := os.ReadFile(mustConfigPath(t))
+	if err := Update(func(c *Config) error { return ErrNoChange }); err != nil {
+		t.Fatalf("Update with ErrNoChange must not fail: %v", err)
+	}
+	after, _ := os.ReadFile(mustConfigPath(t))
+	if string(before) != string(after) {
+		t.Fatalf("ErrNoChange must not rewrite config.json")
+	}
+}
+
+func TestUpdateCallbackErrorDoesNotWrite(t *testing.T) {
+	cfg := &Config{Profiles: []Profile{}, ServerPort: 4799, GitPollInterval: 3}
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+	before, _ := os.ReadFile(mustConfigPath(t))
+
+	sentinel := errors.New("boom")
+	if err := Update(func(c *Config) error {
+		c.GitPollInterval = 99
+		return sentinel
+	}); !errors.Is(err, sentinel) {
+		t.Fatalf("expected sentinel error, got %v", err)
+	}
+	after, _ := os.ReadFile(mustConfigPath(t))
+	if string(before) != string(after) {
+		t.Fatalf("failed Update must not modify config.json")
+	}
+}
+
+func TestCorruptConfigIsPreservedAndReset(t *testing.T) {
+	path := mustConfigPath(t)
+	if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig on corrupt file must recover, got %v", err)
+	}
+	if cfg.ServerPort != 4799 || cfg.GitPollInterval != 3 {
+		t.Fatalf("expected defaults after corruption, got %+v", cfg)
+	}
+
+	dir := filepath.Dir(path)
+	entries, _ := os.ReadDir(dir)
+	found := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config.json.corrupt-") {
+			found = true
+			data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+			if string(data) != "{not json" {
+				t.Errorf("corrupt backup must preserve original bytes, got %q", data)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a config.json.corrupt-* backup to be created")
+	}
+}
+
+func TestGeneratedIDsAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		id := NewProfileID()
+		if seen[id] {
+			t.Fatalf("duplicate profile id generated: %s", id)
+		}
+		seen[id] = true
+	}
+	seen = map[string]bool{}
+	for i := 0; i < 100; i++ {
+		id := NewFolderID()
+		if seen[id] {
+			t.Fatalf("duplicate folder id generated: %s", id)
+		}
+		seen[id] = true
+	}
+}
+
+func TestUpsertProfileKeepsSavedLayoutAndFolder(t *testing.T) {
+	cfg := &Config{}
+	cfg.UpsertProfile(Profile{ID: "p1", Name: "Original", Command: "cmd.exe"})
+	cfg.Profiles[0].SavedLayout = &SavedLayoutNode{ID: "pane1"}
+	cfg.Profiles[0].Folder = "f1"
+
+	// A partial update (no layout/folder) must not erase them.
+	cfg.UpsertProfile(Profile{ID: "p1", Name: "Renamed", Command: "cmd.exe"})
+	if cfg.Profiles[0].Name != "Renamed" {
+		t.Fatalf("name was not updated: %q", cfg.Profiles[0].Name)
+	}
+	if cfg.Profiles[0].SavedLayout == nil || cfg.Profiles[0].SavedLayout.ID != "pane1" {
+		t.Fatalf("saved layout was erased")
+	}
+	if cfg.Profiles[0].Folder != "f1" {
+		t.Fatalf("folder was erased")
+	}
+
+	// A new profile without an ID must get a generated one and not overwrite p1.
+	cfg.UpsertProfile(Profile{Name: "New"})
+	if len(cfg.Profiles) != 2 || cfg.Profiles[1].ID == "" || cfg.Profiles[1].ID == "p1" {
+		t.Fatalf("expected a new profile with a fresh id, got %+v", cfg.Profiles)
+	}
+}
+
+func mustConfigPath(t *testing.T) string {
+	t.Helper()
+	dir, err := GetConfigDir()
+	if err != nil {
+		t.Fatalf("GetConfigDir failed: %v", err)
+	}
+	return filepath.Join(dir, "config.json")
 }

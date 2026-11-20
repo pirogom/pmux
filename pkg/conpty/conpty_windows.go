@@ -48,7 +48,7 @@ var (
 	// package-init time, so the log line announcing which DLL got picked isn't
 	// emitted before main() has had a chance to attach/redirect the console
 	// (see attachConsole in console_windows.go).
-	pseudoConsoleDLLOnce sync.Once
+	pseudoConsoleDLLOnce    sync.Once
 	procCreatePseudoConsole *windows.LazyProc
 	procResizePseudoConsole *windows.LazyProc
 	procClosePseudoConsole  *windows.LazyProc
@@ -284,12 +284,7 @@ func New(command string, args []string, dir string, env []string, cols, rows int
 	}
 
 	// 4. Build Command Line string
-	cmdLineStr := command
-	for _, arg := range args {
-		if arg != "" {
-			cmdLineStr += " " + arg
-		}
-	}
+	cmdLineStr := buildCommandLine(command, args)
 	cmdLineUTF16, err := windows.UTF16PtrFromString(cmdLineStr)
 	if err != nil {
 		procClosePseudoConsole.Call(uintptr(hPC))
@@ -380,6 +375,9 @@ func (c *ConPTY) Resize(cols, rows int) error {
 	c.resizeMu.Lock()
 	defer c.resizeMu.Unlock()
 
+	if c.hPC == 0 {
+		return nil // already closed
+	}
 	c.cols = cols
 	c.rows = rows
 	return c.resizeLocked(cols, rows)
@@ -405,6 +403,10 @@ func (c *ConPTY) ForceRedraw(cols, rows int) error {
 	c.resizeMu.Lock()
 	defer c.resizeMu.Unlock()
 
+	if c.hPC == 0 {
+		return nil // already closed
+	}
+
 	jitterCols := cols + 1
 	if jitterCols > 300 {
 		jitterCols = cols - 1
@@ -428,12 +430,17 @@ func (c *ConPTY) CloseKeepProcess() error {
 	return c.close(false)
 }
 
+// close tears down the pseudo console. It takes resizeMu so a debounced
+// Resize/ForceRedraw goroutine can never race with the handles being closed.
 func (c *ConPTY) close(terminateProcess bool) error {
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+
 	if c.InPipe != nil {
-		c.InPipe.Close()
+		_ = c.InPipe.Close()
 	}
 	if c.OutPipe != nil {
-		c.OutPipe.Close()
+		_ = c.OutPipe.Close()
 	}
 	if c.hPC != 0 {
 		procClosePseudoConsole.Call(uintptr(c.hPC))
@@ -452,6 +459,9 @@ func (c *ConPTY) close(terminateProcess bool) error {
 // ExitCode returns the current exit code of the root process without blocking.
 // Returns (259 /* STILL_ACTIVE */, nil) if the process has not exited yet.
 func (c *ConPTY) ExitCode() (uint32, error) {
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+
 	if c.ProcHandle == 0 {
 		return 0, fmt.Errorf("no process handle")
 	}
@@ -463,15 +473,18 @@ func (c *ConPTY) ExitCode() (uint32, error) {
 }
 
 func (c *ConPTY) Wait() (uint32, error) {
-	if c.ProcHandle == 0 {
+	c.resizeMu.Lock()
+	handle := c.ProcHandle
+	c.resizeMu.Unlock()
+	if handle == 0 {
 		return 0, nil
 	}
-	event, err := windows.WaitForSingleObject(c.ProcHandle, windows.INFINITE)
+	event, err := windows.WaitForSingleObject(handle, windows.INFINITE)
 	if err != nil {
 		return 0, err
 	}
 	var exitCode uint32
-	if err := windows.GetExitCodeProcess(c.ProcHandle, &exitCode); err != nil {
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
 		return 0, err
 	}
 	_ = event

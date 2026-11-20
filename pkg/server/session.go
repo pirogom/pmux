@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -97,6 +98,11 @@ type Pane struct {
 	inCh        chan []byte
 	inDone      chan struct{}
 	inOnce      sync.Once
+	// overflow holds input chunks that did not fit into inCh. It is bounded so
+	// a flood of paste data can never spawn unbounded goroutines or grow
+	// memory without limit.
+	overflowMu  sync.Mutex
+	overflow    [][]byte
 	modeTracker *VTModeTracker
 	// onExit is invoked when the read loop ends. keepProcessAlive is true when
 	// the ConPTY output pipe closed (EOF) while the root process was still
@@ -106,6 +112,9 @@ type Pane struct {
 	onExit func(sessionID, paneID string, keepProcessAlive bool)
 	mu     sync.Mutex
 }
+
+// maxPaneInputOverflow bounds the per-pane overflow queue (chunks).
+const maxPaneInputOverflow = 1024
 
 func newPane(paneID, sessionID, workDir, command string, args []string, cols, rows int, ptyInst *conpty.ConPTY, onExit func(sID, pID string, keepProcessAlive bool)) *Pane {
 	p := &Pane{
@@ -137,6 +146,9 @@ func (p *Pane) GetModePreamble() []byte {
 	return p.modeTracker.ActivePreamble()
 }
 
+// WriteInput queues terminal input for the pane. Ordering is preserved: once
+// the bounded channel is full, further chunks are appended to an overflow
+// queue (also bounded) instead of spawning a goroutine per chunk.
 func (p *Pane) WriteInput(data []byte) {
 	if len(data) == 0 {
 		return
@@ -144,21 +156,54 @@ func (p *Pane) WriteInput(data []byte) {
 	chunk := make([]byte, len(data))
 	copy(chunk, data)
 
+	p.overflowMu.Lock()
+	hasOverflow := len(p.overflow) > 0
+	if hasOverflow {
+		if len(p.overflow) < maxPaneInputOverflow {
+			p.overflow = append(p.overflow, chunk)
+			p.overflowMu.Unlock()
+			return
+		}
+		p.overflowMu.Unlock()
+		return // drop rather than grow without bound
+	}
+	p.overflowMu.Unlock()
+
 	select {
 	case <-p.inDone:
 		return
 	case p.inCh <- chunk:
 	default:
-		go func(c []byte) {
-			select {
-			case <-p.inDone:
-			case p.inCh <- c:
-			}
-		}(chunk)
+		p.overflowMu.Lock()
+		if len(p.overflow) < maxPaneInputOverflow {
+			p.overflow = append(p.overflow, chunk)
+		}
+		p.overflowMu.Unlock()
 	}
 }
 
+// popOverflow removes and returns the oldest overflow chunk, or nil.
+func (p *Pane) popOverflow() []byte {
+	p.overflowMu.Lock()
+	defer p.overflowMu.Unlock()
+	if len(p.overflow) == 0 {
+		return nil
+	}
+	chunk := p.overflow[0]
+	p.overflow[0] = nil
+	p.overflow = p.overflow[1:]
+	return chunk
+}
+
 func (p *Pane) inputLoop() {
+	write := func(data []byte) {
+		p.mu.Lock()
+		ptyInst := p.PTY
+		p.mu.Unlock()
+		if ptyInst != nil && ptyInst.InPipe != nil {
+			_, _ = ptyInst.InPipe.Write(data)
+		}
+	}
 	for {
 		select {
 		case <-p.inDone:
@@ -167,11 +212,14 @@ func (p *Pane) inputLoop() {
 			if !ok {
 				return
 			}
-			p.mu.Lock()
-			ptyInst := p.PTY
-			p.mu.Unlock()
-			if ptyInst != nil && ptyInst.InPipe != nil {
-				_, _ = ptyInst.InPipe.Write(data)
+			write(data)
+			// Drain anything that was queued while the channel was full.
+			for {
+				next := p.popOverflow()
+				if next == nil {
+					break
+				}
+				write(next)
 			}
 		}
 	}
@@ -375,6 +423,10 @@ type Session struct {
 	ActivePaneID string           `json:"activePaneId"`
 	Layout       *LayoutNode      `json:"layout"`
 	mu           sync.RWMutex
+	// layoutSeq orders concurrent layout snapshots so an older snapshot can
+	// never overwrite a newer one on disk.
+	layoutSeq atomic.Uint64
+	persistMu sync.Mutex
 }
 
 type EventBroadcaster func(eventType string, data interface{})
@@ -415,47 +467,66 @@ func (sm *SessionManager) notifyChange(eventType string, data interface{}) {
 }
 
 func (sm *SessionManager) CreateSession(profileID, name, command string, args []string, workDir string, cols, rows int) (*Session, *Pane, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	now := time.Now().UnixNano()
 	sessionID := fmt.Sprintf("sess_%d", now)
 
 	if name == "" {
+		sm.mu.RLock()
 		name = fmt.Sprintf("Session %d", len(sm.sessions)+1)
+		sm.mu.RUnlock()
 	}
 
-	// 1. Check if profile has a saved layout
-	cfg, errConfig := config.LoadConfig()
+	// 1. Resolve the profile (strictly by ID — the previous name-prefix
+	// heuristic could attach a session to the wrong profile).
 	var savedLayout *config.SavedLayoutNode
 	var matchedProfileID string
-
-	if errConfig == nil && cfg != nil {
-		for _, prof := range cfg.Profiles {
-			if (profileID != "" && prof.ID == profileID) || prof.ID == name || prof.Name == name || (len(prof.Name) > 0 && strings.HasPrefix(name, prof.Name)) {
-				matchedProfileID = prof.ID
-				savedLayout = prof.SavedLayout
-				break
+	if profileID != "" {
+		if cfg, err := config.LoadConfig(); err == nil && cfg != nil {
+			for _, prof := range cfg.Profiles {
+				if prof.ID == profileID {
+					matchedProfileID = prof.ID
+					savedLayout = prof.SavedLayout
+					break
+				}
 			}
 		}
 	}
 
-	// 2. If saved layout exists, reconstruct multi-pane layout
+	// 2. If a saved layout exists, reconstruct the multi-pane layout. ConPTY
+	// creation happens outside the manager lock so a slow shell startup does
+	// not block every other session API call.
 	if savedLayout != nil && len(savedLayout.Children) > 0 {
-		sess := &Session{
-			ID:        sessionID,
-			Name:      name,
-			ProfileID: matchedProfileID,
-			CreatedAt: time.Now(),
-			Panes:     make(map[string]*Pane),
-		}
-		layoutTree, firstPane, errBuild := sm.buildLayoutFromSaved(savedLayout, sessionID, sess, cols, rows)
+		layoutTree, panes, firstPane, errBuild := sm.buildLayoutFromSaved(savedLayout, sessionID, cols, rows)
 		if errBuild == nil && layoutTree != nil && firstPane != nil {
-			sess.Layout = layoutTree
-			sess.ActivePaneID = firstPane.ID
+			sess := &Session{
+				ID:           sessionID,
+				Name:         name,
+				ProfileID:    matchedProfileID,
+				CreatedAt:    time.Now(),
+				Panes:        panes,
+				ActivePaneID: firstPane.ID,
+				Layout:       layoutTree,
+			}
+
+			sm.mu.Lock()
 			sm.sessions[sessionID] = sess
+			for id, p := range panes {
+				sm.panes[id] = p
+			}
+			sm.mu.Unlock()
+
+			for _, p := range panes {
+				go p.readLoop()
+			}
 			sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "created"})
 			return sess, firstPane, nil
+		}
+		// Partial failure: make sure no half-built PTY is leaked.
+		for _, p := range panes {
+			if p.PTY != nil {
+				p.PTY.Close()
+			}
+			p.CloseInput()
 		}
 	}
 
@@ -482,22 +553,36 @@ func (sm *SessionManager) CreateSession(profileID, name, command string, args []
 		},
 	}
 
+	sm.mu.Lock()
 	sm.sessions[sessionID] = sess
 	sm.panes[paneID] = pane
+	sm.mu.Unlock()
+
 	go pane.readLoop()
 
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "created"})
 	return sess, pane, nil
 }
 
-func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, sessionID string, sess *Session, cols, rows int) (*LayoutNode, *Pane, error) {
+// buildLayoutFromSaved materializes a saved layout tree into live panes. It
+// does not touch SessionManager state so it can run without holding sm.mu.
+func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, sessionID string, cols, rows int) (*LayoutNode, map[string]*Pane, *Pane, error) {
+	panes := make(map[string]*Pane)
+	layout, firstPane, err := sm.buildLayoutNode(node, sessionID, panes, cols, rows)
+	if err != nil {
+		return nil, panes, nil, err
+	}
+	return layout, panes, firstPane, nil
+}
+
+func (sm *SessionManager) buildLayoutNode(node *config.SavedLayoutNode, sessionID string, panes map[string]*Pane, cols, rows int) (*LayoutNode, *Pane, error) {
 	if node == nil {
 		return nil, nil, nil
 	}
 
-	if node.Children == nil || len(node.Children) == 0 {
+	if len(node.Children) == 0 {
 		now := time.Now().UnixNano()
-		paneID := fmt.Sprintf("pane_%d_%d", now, len(sess.Panes)+1)
+		paneID := fmt.Sprintf("pane_%d_%d", now, len(panes)+1)
 
 		cmd := node.Command
 		if cmd == "" {
@@ -512,10 +597,7 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 		pane := newPane(paneID, sessionID, node.WorkDir, cmd, node.Args, cols, rows, ptyInst, func(sID, pID string, keepProcessAlive bool) {
 			_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 		})
-
-		sess.Panes[paneID] = pane
-		sm.panes[paneID] = pane
-		go pane.readLoop()
+		panes[paneID] = pane
 
 		return &LayoutNode{ID: paneID}, pane, nil
 	}
@@ -524,8 +606,11 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 	var firstPane *Pane
 
 	for _, childSaved := range node.Children {
-		childLayout, paneInst, err := sm.buildLayoutFromSaved(childSaved, sessionID, sess, cols, rows)
-		if err == nil && childLayout != nil {
+		childLayout, paneInst, err := sm.buildLayoutNode(childSaved, sessionID, panes, cols, rows)
+		if err != nil {
+			return nil, nil, err
+		}
+		if childLayout != nil {
 			childNodes = append(childNodes, childLayout)
 			if firstPane == nil && paneInst != nil {
 				firstPane = paneInst
@@ -547,41 +632,41 @@ func (sm *SessionManager) buildLayoutFromSaved(node *config.SavedLayoutNode, ses
 
 func (sm *SessionManager) RenameSession(sessionID, newName string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	sess, ok := sm.sessions[sessionID]
 	if !ok {
+		sm.mu.Unlock()
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
+		sm.mu.Unlock()
 		return fmt.Errorf("session name cannot be empty")
 	}
 	runes := []rune(newName)
 	if len(runes) > 256 {
 		newName = string(runes[:256])
 	}
-
 	sess.Name = newName
-	saveLayoutToProfile(sess.ProfileID, sess.Name, sess)
+	sm.mu.Unlock()
+
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "renamed"})
 	return nil
 }
 
 func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction SplitDirection, command string, args []string, workDir string, cols, rows int) (*Pane, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
+	// Read the parent's launch parameters under a short read lock, then create
+	// the ConPTY without holding the manager lock.
+	sm.mu.RLock()
 	sess, ok := sm.sessions[sessionID]
 	if !ok {
+		sm.mu.RUnlock()
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
-
 	parentPane, ok := sess.Panes[parentPaneID]
 	if !ok {
+		sm.mu.RUnlock()
 		return nil, fmt.Errorf("parent pane not found: %s", parentPaneID)
 	}
-
 	if command == "" {
 		command = parentPane.Command
 		args = parentPane.Args
@@ -589,6 +674,7 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 	if workDir == "" {
 		workDir = parentPane.WorkDir
 	}
+	sm.mu.RUnlock()
 
 	paneID := fmt.Sprintf("pane_split_%d", time.Now().UnixNano())
 
@@ -601,6 +687,21 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 		_ = sm.closePaneInternal(sID, pID, !keepProcessAlive)
 	})
 
+	sm.mu.Lock()
+	sess, ok = sm.sessions[sessionID]
+	if !ok {
+		sm.mu.Unlock()
+		ptyInst.Close()
+		newPane.CloseInput()
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	if _, parentStillThere := sess.Panes[parentPaneID]; !parentStillThere {
+		sm.mu.Unlock()
+		ptyInst.Close()
+		newPane.CloseInput()
+		return nil, fmt.Errorf("parent pane not found: %s", parentPaneID)
+	}
+
 	sess.Panes[paneID] = newPane
 	sess.ActivePaneID = paneID
 	sm.panes[paneID] = newPane
@@ -608,10 +709,14 @@ func (sm *SessionManager) SplitPane(sessionID, parentPaneID string, direction Sp
 	// Update Layout Tree
 	sess.Layout = insertLayoutNode(sess.Layout, parentPaneID, paneID, direction)
 
-	// Persist layout changes to profile config.json
-	saveLayoutToProfile(sess.ProfileID, sess.Name, sess)
+	layoutSnapshot, layoutSeq := persistLayoutLocked(sess)
+	sm.mu.Unlock()
 
 	go newPane.readLoop()
+
+	// Persist layout changes outside the lock (config I/O must not block the
+	// session API).
+	saveLayoutSnapshot(sess, layoutSnapshot, layoutSeq)
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "split"})
 
 	return newPane, nil
@@ -740,21 +845,54 @@ func (sm *SessionManager) ClosePane(sessionID, paneID string) error {
 // terminated — used when the ConPTY pipe closed while the root process was
 // still STILL_ACTIVE (see readLoop), so pmux doesn't kill a shell that never
 // actually exited.
+//
+// Only in-memory bookkeeping happens under sm.mu: process termination, socket
+// closes and config persistence all run after the lock is released so a slow
+// Teardown cannot stall every other session operation.
 func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	sess, ok := sm.sessions[sessionID]
 	if !ok {
+		sm.mu.Unlock()
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	pane, ok := sess.Panes[paneID]
 	if !ok {
+		sm.mu.Unlock()
 		return nil
 	}
 
 	pane.CloseInput()
+	delete(sess.Panes, paneID)
+	delete(sm.panes, paneID)
+
+	pane.mu.Lock()
+	clients := pane.Clients
+	pane.Clients = make(map[*websocket.Conn]*clientView)
+	pane.mu.Unlock()
+
+	// If no panes left in session, close entire session
+	sessionClosed := len(sess.Panes) == 0
+	var layoutSnapshot *config.SavedLayoutNode
+	var layoutSeq uint64
+	if sessionClosed {
+		delete(sm.sessions, sessionID)
+	} else {
+		// Update Layout Tree by removing paneID
+		sess.Layout = removeLayoutNode(sess.Layout, paneID)
+
+		// Set active pane to any remaining pane if deleted pane was active
+		if sess.ActivePaneID == paneID {
+			for remainingID := range sess.Panes {
+				sess.ActivePaneID = remainingID
+				break
+			}
+		}
+		layoutSnapshot, layoutSeq = persistLayoutLocked(sess)
+	}
+	sm.mu.Unlock()
 
 	if pane.PTY != nil {
 		if forceKill {
@@ -767,66 +905,55 @@ func (sm *SessionManager) closePaneInternal(sessionID, paneID string, forceKill 
 		}
 	}
 
-	pane.mu.Lock()
-	for conn, cv := range pane.Clients {
+	for conn, cv := range clients {
 		close(cv.ch)
 		_ = conn.Close(websocket.StatusNormalClosure, "pane closed")
 	}
-	pane.Clients = make(map[*websocket.Conn]*clientView)
-	pane.mu.Unlock()
 
-	delete(sess.Panes, paneID)
-	delete(sm.panes, paneID)
-
-	// If no panes left in session, close entire session
-	if len(sess.Panes) == 0 {
-		delete(sm.sessions, sessionID)
-		return nil
+	if !sessionClosed {
+		saveLayoutSnapshot(sess, layoutSnapshot, layoutSeq)
+		sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "close-pane"})
 	}
-
-	// Update Layout Tree by removing paneID
-	sess.Layout = removeLayoutNode(sess.Layout, paneID)
-
-	// Set active pane to any remaining pane if deleted pane was active
-	if sess.ActivePaneID == paneID {
-		for remainingID := range sess.Panes {
-			sess.ActivePaneID = remainingID
-			break
-		}
-	}
-
-	// Persist layout changes to profile config.json
-	saveLayoutToProfile(sess.ProfileID, sess.Name, sess)
-
-	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "close-pane"})
 	return nil
 }
 
 func (sm *SessionManager) CloseSession(sessionID string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	sess, ok := sm.sessions[sessionID]
 	if !ok {
+		sm.mu.Unlock()
 		return nil
 	}
 
+	type closingPane struct {
+		pane    *Pane
+		clients map[*websocket.Conn]*clientView
+	}
+	closing := make([]closingPane, 0, len(sess.Panes))
 	for paneID, pane := range sess.Panes {
 		pane.CloseInput()
-		if pane.PTY != nil {
-			pane.PTY.Close()
-		}
 		pane.mu.Lock()
-		for conn, cv := range pane.Clients {
-			close(cv.ch)
-			_ = conn.Close(websocket.StatusNormalClosure, "session closed")
-		}
+		clients := pane.Clients
 		pane.Clients = make(map[*websocket.Conn]*clientView)
 		pane.mu.Unlock()
+		closing = append(closing, closingPane{pane: pane, clients: clients})
 		delete(sm.panes, paneID)
 	}
 
 	delete(sm.sessions, sessionID)
+	sm.mu.Unlock()
+
+	// Terminate processes and close sockets outside the manager lock.
+	for _, cp := range closing {
+		if cp.pane.PTY != nil {
+			cp.pane.PTY.Close()
+		}
+		for conn, cv := range cp.clients {
+			close(cv.ch)
+			_ = conn.Close(websocket.StatusNormalClosure, "session closed")
+		}
+	}
+
 	sm.notifyChange("session_updated", map[string]interface{}{"sessionId": sessionID, "action": "close-session"})
 	return nil
 }
@@ -915,32 +1042,57 @@ func convertToSavedLayoutNode(node *LayoutNode, panes map[string]*Pane) *config.
 	}
 }
 
-func saveLayoutToProfile(profileID, sessionName string, sess *Session) {
+// persistLayoutLocked snapshots the session's layout for persistence. It must
+// be called with sm.mu held (the layout tree is not safe to read otherwise);
+// the returned value and sequence number can then be handed to
+// saveLayoutSnapshot after unlocking.
+func persistLayoutLocked(sess *Session) (*config.SavedLayoutNode, uint64) {
 	if sess == nil || sess.Layout == nil || len(sess.Panes) == 0 {
-		return // Never wipe out a profile's saved layout blueprint when session ends or has no panes
+		return nil, 0 // Never wipe out a profile's saved layout blueprint when session ends or has no panes
 	}
+	seq := sess.layoutSeq.Add(1)
+	return convertToSavedLayoutNode(sess.Layout, sess.Panes), seq
+}
 
-	cfg, err := config.LoadConfig()
-	if err != nil || cfg == nil {
+// saveLayoutSnapshot persists a layout snapshot unless a newer snapshot has
+// already been taken, so concurrent pane closes/splits cannot write an older
+// layout over a newer one.
+func saveLayoutSnapshot(sess *Session, layout *config.SavedLayoutNode, seq uint64) {
+	if sess == nil || layout == nil {
 		return
 	}
+	sess.persistMu.Lock()
+	defer sess.persistMu.Unlock()
+	if sess.layoutSeq.Load() != seq {
+		return // a newer snapshot exists; it will (or did) persist itself
+	}
+	saveLayoutToProfile(sess.ProfileID, layout)
+}
 
-	savedLayout := convertToSavedLayoutNode(sess.Layout, sess.Panes)
-	if savedLayout == nil {
+// saveLayoutToProfile persists a layout snapshot to the profile with the given
+// ID. Profiles are matched strictly by ID: a renamed session used to silently
+// stop persisting because the name-based fallback no longer matched.
+func saveLayoutToProfile(profileID string, savedLayout *config.SavedLayoutNode) {
+	if profileID == "" || savedLayout == nil {
 		return
 	}
 
 	updated := false
-	for i, prof := range cfg.Profiles {
-		if (profileID != "" && prof.ID == profileID) || prof.Name == sessionName || (len(prof.Name) > 0 && strings.HasPrefix(sessionName, prof.Name)) {
-			cfg.Profiles[i].SavedLayout = savedLayout
-			updated = true
-			break
+	err := config.Update(func(cfg *config.Config) error {
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].ID == profileID {
+				cfg.Profiles[i].SavedLayout = savedLayout
+				updated = true
+				return nil
+			}
 		}
+		return config.ErrNoChange
+	})
+	if err != nil {
+		log.Printf("[session persistence] failed to save layout for profile %s: %v", profileID, err)
+		return
 	}
-
 	if updated {
-		_ = config.SaveConfig(cfg)
-		log.Printf("[session persistence] Saved layout tree to profile %s (ProfileID: %s)", sessionName, profileID)
+		log.Printf("[session persistence] Saved layout tree to profile (ProfileID: %s)", profileID)
 	}
 }

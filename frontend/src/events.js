@@ -2,28 +2,40 @@ import { state } from './state.js';
 import { refreshSessions, attachToSession, setActivePane, showEmptyState } from './workspace.js';
 import { refreshConfigAndProfiles } from './profiles.js';
 import { applyGitPollInterval } from './git.js';
+import { serverWsUrl } from './api.js';
 
 let eventsWS = null;
+let reconnectDelay = 1000;
+let shuttingDown = false;
 
 export function connectGlobalEventsWS() {
-    if (eventsWS) {
-        try { eventsWS.close(); } catch(e) {}
+    if (!state.serverToken) {
+        console.warn('[events ws] No daemon token available; not connecting.');
+        return;
     }
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//127.0.0.1:${state.serverPort}/ws/events`;
-    eventsWS = new WebSocket(wsUrl);
+    if (eventsWS) {
+        const old = eventsWS;
+        eventsWS = null;
+        try { old.close(); } catch (e) {}
+    }
 
-    eventsWS.onopen = () => {
+    const ws = new WebSocket(serverWsUrl('/ws/events'));
+    eventsWS = ws;
+
+    ws.onopen = () => {
         console.log('[events ws] Connected to global events stream');
+        reconnectDelay = 1000;
         refreshSessions();
         refreshConfigAndProfiles();
     };
 
-    eventsWS.onmessage = (event) => {
+    ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'server_shutdown') {
                 console.log('[events ws] Server shutting down. Quitting client...');
+                // Do not reconnect to a server that is intentionally gone.
+                shuttingDown = true;
                 if (window.go && window.go.main && window.go.main.App && window.go.main.App.QuitApp) {
                     window.go.main.App.QuitApp();
                 } else {
@@ -76,11 +88,16 @@ export function connectGlobalEventsWS() {
         }
     };
 
-    eventsWS.onclose = () => {
-        setTimeout(connectGlobalEventsWS, 1000);
+    ws.onclose = () => {
+        // A stale socket's close event must not schedule another reconnect.
+        if (eventsWS !== ws) return;
+        eventsWS = null;
+        if (shuttingDown) return;
+        setTimeout(connectGlobalEventsWS, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
 
-    eventsWS.onerror = (err) => {
+    ws.onerror = (err) => {
         console.error('[events ws] error:', err);
     };
 }

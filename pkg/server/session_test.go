@@ -11,6 +11,7 @@ func TestRemoveLayoutNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
+	defer sm.CloseSession(sess.ID)
 
 	p2, err := sm.SplitPane(sess.ID, p1.ID, SplitHorizontal, "cmd.exe", nil, "", 80, 24)
 	if err != nil {

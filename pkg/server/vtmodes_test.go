@@ -44,3 +44,36 @@ func TestVTModeTracker(t *testing.T) {
 		t.Errorf("Expected 2004h to remain active since it was not reset")
 	}
 }
+
+func TestVTModeTracker_SequenceSplitAcrossChunks(t *testing.T) {
+	tracker := NewVTModeTracker()
+
+	// Split in the middle of the escape prefix.
+	tracker.Process([]byte("text\x1b"))
+	tracker.Process([]byte("[?1049h more"))
+	if !strings.Contains(string(tracker.ActivePreamble()), "\x1b[?1049h") {
+		t.Fatalf("mode split across prefix chunks was lost: %q", tracker.ActivePreamble())
+	}
+
+	// Split in the middle of the parameters.
+	tracker.Process([]byte("\x1b[?20"))
+	tracker.Process([]byte("04h"))
+	if !strings.Contains(string(tracker.ActivePreamble()), "\x1b[?2004h") {
+		t.Fatalf("mode split across parameter chunks was lost: %q", tracker.ActivePreamble())
+	}
+
+	// Split right before the terminator.
+	tracker.Process([]byte("\x1b[?1006"))
+	tracker.Process([]byte("l"))
+	if strings.Contains(string(tracker.ActivePreamble()), "1006") {
+		t.Fatalf("DECRST split before its terminator was lost: %q", tracker.ActivePreamble())
+	}
+}
+
+func TestVTModeTracker_PartialSequenceDoesNotLeakIntoText(t *testing.T) {
+	tracker := NewVTModeTracker()
+	tracker.Process([]byte("normal text"))
+	if tracker.pending != nil {
+		t.Fatalf("expected no pending carry for plain text, got %q", tracker.pending)
+	}
+}

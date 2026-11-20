@@ -22,10 +22,14 @@ func GetStatus(workDir string) GitStatusResult {
 	}
 
 	branch := currentBranch(bundle.repo)
+	headHash := ""
+	if head, err := bundle.repo.Head(); err == nil {
+		headHash = head.Hash().String()
+	}
 
 	st, err := bundle.worktree.Status()
 	if err != nil {
-		return GitStatusResult{IsGitRepo: true, Branch: branch, Root: bundle.root, Error: err.Error()}
+		return GitStatusResult{IsGitRepo: true, Branch: branch, HeadHash: headHash, Root: bundle.root, Error: err.Error()}
 	}
 
 	// go-git's Status() hashes worktree files raw: it does not apply
@@ -78,6 +82,7 @@ func GetStatus(workDir string) GitStatusResult {
 	return GitStatusResult{
 		IsGitRepo: true,
 		Branch:    branch,
+		HeadHash:  headHash,
 		Root:      bundle.root,
 		Changes:   changes,
 	}

@@ -78,6 +78,15 @@ pmux.exe --server --log
 pmux.exe --help
 ```
 
+### 로컬 데몬 보안
+
+데몬은 `127.0.0.1`에만 바인딩되지만, 사용자가 방문하는 웹 페이지에서도 로컬 HTTP에 접근할 수 있습니다. 따라서 모든 요청에는 공유 토큰이 필요합니다.
+
+- 토큰은 최초 실행 시 생성되어 `~/.pmux/token`(0600)에 저장되며, 동일 Windows 사용자만 읽을 수 있습니다.
+- GUI는 `GetServerToken` Wails 바인딩으로 토큰을 받아 HTTP에는 `Authorization: Bearer <token>`을, WebSocket에는 `?token=...`을 붙입니다.
+- Cross-Origin 요청은 Wails 웹뷰 오리진(`wails.localhost`, `localhost`, `127.0.0.1`)에서만 허용되고, WebSocket 핸드셰이크도 `Origin`을 검증합니다.
+- Wails 없이 브라우저 모드로 띄우는 경우 `http://localhost:34115/?token=<~/.pmux/token 값>`처럼 토큰을 직접 전달해야 합니다.
+
 ---
 
 ## 💡 SSH 클라이언트 권장 사항 (Windows OpenSSH vs MSYS2 SSH)
@@ -119,6 +128,7 @@ SSH 원격 접속 시에는 MSYS2 내장 `ssh` 대신 **Windows 기본 내장 Op
 ### 접속 (Connect)
 - 주소를 선택하고 **Connect**를 클릭합니다.
 - pmux는 선택한 Pane의 터미널에 `ssh` 명령을 입력해줍니다 — 이후의 호스트 키 확인, 비밀번호 입력 등은 터미널에서 직접 처리하면 됩니다.
+- 호스트/계정은 셸에 그대로 입력되므로, 허용된 문자(영문/숫자/`.` `_` `-` `:` `@` `/` `[` `]`)만 사용할 수 있습니다. 허용되지 않은 문자가 포함된 항목(예: 공유받은 `*.pmuxssh` 파일)은 Connect가 차단됩니다.
 
 ### 데이터 저장 및 보안
 - 설정과 주소록은 `~/.pmux/ssh.conf`에 저장됩니다.
@@ -208,6 +218,8 @@ pmux는 ConPTY 세션을 만들 때 OS에 내장된 `conhost.exe`를 그대로 �
 
 - 원본 바이너리는 `resources/conpty/x64/`, `resources/conpty/x86/`에 있고, 빌드 태그(`resources/conpty/embed_amd64.go`, `embed_386.go`)로 아키텍처별로 분리되어 embed되므로 실제 빌드에는 자기 아키텍처에 맞는 쌍만 포함됩니다.
 - 최초 실행 시 이 두 파일을 `%USERPROFILE%\.pmux\bin\64\`(386 빌드는 `\32\`)에 추출하고(embed된 내용의 해시가 다르면 자동 갱신), 그 경로의 `conpty.dll`을 로드합니다 — 별도 설치 과정 없이 `pmux.exe` 단독 실행 파일만으로 동작합니다. 만약 `pmux.exe`와 같은 폴더에 이미 `conpty.dll`이 놓여있다면(수동 배치 등) 그쪽을 우선 사용합니다. 둘 다 사용할 수 없으면 기존처럼 OS의 `kernel32.dll`/시스템 `conhost.exe`로 자동 폴백합니다.
+  > [!NOTE]
+  > `pmux.exe` 옆의 `conpty.dll`은 사용자 권한으로 로드되므로, `pmux.exe`는 본인만 쓸 수 있는 폴더(예: `%LOCALAPPDATA%\pmux`)에 두세요. 공용/쓰기 가능한 폴더에 두면 DLL 교체 위험이 있습니다. `%USERPROFILE%\.pmux\bin`에 추출되는 내장 사본은 사용 전에 해시로 검증됩니다.
 
 ### ConPTY 호스트 버전 갱신 방법
 

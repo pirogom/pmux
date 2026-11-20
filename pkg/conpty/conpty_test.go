@@ -84,3 +84,37 @@ func TestConPTYConcurrentResizeAndForceRedraw(t *testing.T) {
 	}
 }
 
+func TestQuoteWindowsArg(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"cmd.exe", "cmd.exe"},
+		{`C:\Windows\System32\cmd.exe`, `C:\Windows\System32\cmd.exe`},
+		{`C:\Program Files\Git\bin\bash.exe`, `"C:\Program Files\Git\bin\bash.exe"`},
+		{`-Command`, `-Command`},
+		{`& {Import-Module 'x'; Enter-VsDevShell}`, `"& {Import-Module 'x'; Enter-VsDevShell}"`},
+		{`say "hi"`, `"say \"hi\""`},
+		{`C:\dir with space\`, `"C:\dir with space\\"`},
+		{"", `""`},
+	}
+	for _, tc := range tests {
+		if got := quoteWindowsArg(tc.in); got != tc.want {
+			t.Errorf("quoteWindowsArg(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestBuildCommandLine(t *testing.T) {
+	got := buildCommandLine(`C:\Program Files\Git\bin\bash.exe`, []string{"--login", "-i"})
+	want := `"C:\Program Files\Git\bin\bash.exe" --login -i`
+	if got != want {
+		t.Fatalf("buildCommandLine = %q, want %q", got, want)
+	}
+
+	// Empty args are skipped rather than producing empty quoted arguments.
+	got = buildCommandLine("cmd.exe", []string{"", "/k"})
+	if got != "cmd.exe /k" {
+		t.Fatalf("buildCommandLine = %q, want %q", got, "cmd.exe /k")
+	}
+}

@@ -19,40 +19,32 @@ function scheduleResizeRedraw() {
 }
 
 // getCellSize returns the terminal's measured cell size in pixels, or null
-// until the renderer has computed its dimensions.
+// until the renderer has computed its dimensions. It relies only on public
+// xterm.js APIs/DOM (the .xterm-screen element is sized to the buffer's exact
+// pixel dimensions) instead of the private _core._renderService internals,
+// which change between xterm releases.
 export function getCellSize(term) {
     if (!term) return null;
-    const readFromRenderService = () => {
-        try {
-            const core = term._core;
-            if (core && core._renderService && core._renderService.dimensions && core._renderService.dimensions.css) {
-                const css = core._renderService.dimensions.css;
-                if (css.cell && css.cell.width > 0 && css.cell.height > 0) {
-                    return { cellW: css.cell.width, cellH: css.cell.height };
-                }
-            }
-        } catch (e) {}
+
+    const measure = () => {
+        if (!term.element || term.cols <= 0 || term.rows <= 0) return null;
+        const screenEl = term.element.querySelector('.xterm-screen');
+        if (!screenEl) return null;
+        const w = screenEl.clientWidth;
+        const h = screenEl.clientHeight;
+        if (w > 0 && h > 0) {
+            return { cellW: w / term.cols, cellH: h / term.rows };
+        }
         return null;
     };
-    let cell = readFromRenderService();
+
+    let cell = measure();
     if (!cell) {
-        // Force the renderer to measure the font metrics (like FitAddon does)
+        // Force a render pass so the renderer sizes .xterm-screen.
         try {
-            const core = term._core;
-            if (core && core._renderService && typeof core._renderService.measure === 'function') {
-                core._renderService.measure();
-            }
+            term.refresh(0, Math.max(0, term.rows - 1));
         } catch (e) {}
-        cell = readFromRenderService();
-    }
-    if (!cell && term.element && term.cols > 0 && term.rows > 0) {
-        // Fallback: .xterm-screen carries the buffer's exact pixel size
-        // (unlike .xterm, which stretches to the container width), so the
-        // derived cell size is font-accurate even before the first render.
-        const screenEl = term.element.querySelector('.xterm-screen');
-        if (screenEl && screenEl.clientWidth > 0 && screenEl.clientHeight > 0) {
-            return { cellW: screenEl.clientWidth / term.cols, cellH: screenEl.clientHeight / term.rows };
-        }
+        cell = measure();
     }
     return cell;
 }
